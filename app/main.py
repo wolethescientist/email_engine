@@ -1,11 +1,22 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.config import get_settings
 from .api.routes.connect import router as connect_router
 from .api.routes.emails import router as emails_router
+from .db.session import init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize database on startup
+    init_db()
+    yield
+    # Cleanup on shutdown (if needed)
+
 
 settings = get_settings()
-app = FastAPI(title=settings.APP_NAME)
+app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 
 # CORS Middleware
 # Configure allowed origins via env var CORS_ORIGINS (comma-separated).
