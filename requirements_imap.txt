@@ -1,0 +1,19 @@
+# Requirements for standalone IMAP Email Fetcher
+# These are built-in Python modules, no additional packages needed
+
+# Built-in modules used:
+# - imaplib (IMAP client)
+# - email (email parsing)
+# - ssl (secure connections)
+# - json (configuration files)
+# - logging (comprehensive logging)
+# - threading (background operations)
+# - signal (graceful shutdown)
+# - time (delays and timeouts)
+# - datetime (date calculations)
+# - argparse (command-line interface)
+
+# If you want to add additional features, consider:
+# requests>=2.28.0  # For webhook notifications
+# schedule>=1.2.0   # For advanced scheduling
+# watchdog>=2.1.0   # For file system monitoring

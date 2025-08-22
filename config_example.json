@@ -1,0 +1,24 @@
+{
+  "host": "imap.gmail.com",
+  "port": 993,
+  "email": "your-email@gmail.com",
+  "password": "your-app-password",
+  "ssl": true,
+  "folders_to_check": [
+    "INBOX",
+    "[Gmail]/Spam",
+    "[Gmail]/Promotions",
+    "Junk"
+  ],
+  "polling": {
+    "interval_seconds": 30,
+    "max_iterations": null
+  },
+  "idle": {
+    "timeout_seconds": 300
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "imap_fetcher.log"
+  }
+}
