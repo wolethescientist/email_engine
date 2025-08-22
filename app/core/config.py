@@ -27,7 +27,7 @@ try:
         IMAP_USE_SSL: bool = True
 
         # App
-        APP_NAME: str = "Email Engine"
+        APP_NAME: str = "ConnexxionEngine"
         DEBUG: bool = False
 
         # CORS
@@ -56,7 +56,7 @@ except Exception:
         IMAP_TIMEOUT_SECONDS: int = int(os.getenv("IMAP_TIMEOUT_SECONDS", "15"))
         SMTP_USE_SSL: bool = os.getenv("SMTP_USE_SSL", "true").lower() == "true"
         IMAP_USE_SSL: bool = os.getenv("IMAP_USE_SSL", "true").lower() == "true"
-        APP_NAME: str = os.getenv("APP_NAME", "Email Engine")
+        APP_NAME: str = os.getenv("APP_NAME", "ConnexxionEngine")
         DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
         # Comma-separated list of origins, e.g. http://localhost:5173,http://localhost:3000
         CORS_ORIGINS: list[str] = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]

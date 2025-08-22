@@ -1,3 +1,6 @@
+# Render Blueprint for ConnexxionEngine
+# This will create all services at once, or you can deploy them separately
+
 services:
   # Backend API service
   - type: web
@@ -40,25 +43,23 @@ services:
         value: 15
       - key: CORS_ORIGINS
         value: https://connexxionengine.onrender.com
-  
-  # Frontend static site
+
+  # Frontend static site (deploys from /frontend folder)
   - type: static
     name: connexxionengine-frontend
-    buildCommand: |
-      cd frontend
-      npm ci
-      npm run build
-    publishPath: ./frontend/dist
-    envVars:
-      - key: VITE_API_BASE_URL
-        fromService:
-          type: web
-          name: connexxionengine-api
-          property: host
+    buildCommand: npm ci && npm run build
+    publishPath: ./dist
+    pullRequestPreviewsEnabled: true
+    buildFilter:
+      paths:
+        - frontend/**
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://connexxionengine-api.onrender.com
 
   # Redis cache
   - type: redis

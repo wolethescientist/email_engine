@@ -9,13 +9,17 @@ app = FastAPI(title=settings.APP_NAME)
 
 # CORS Middleware
 # Configure allowed origins via env var CORS_ORIGINS (comma-separated).
-# Example: CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+# Example: CORS_ORIGINS=http://localhost:5173,https://connexxionengine.onrender.com
 origins = settings.CORS_ORIGINS or []
+if not origins and settings.DEBUG:
+    # In development, allow common local origins if none provided
+    origins = ["http://localhost:5173", "http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In dev, allow all if none provided
+    allow_origins=origins or ["*"],  # Allow all if no specific origins set
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
