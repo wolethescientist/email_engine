@@ -11,8 +11,6 @@ try:
         # Point to absolute .env to avoid CWD issues
         model_config = SettingsConfigDict(env_file=str(ENV_PATH), env_file_encoding="utf-8", case_sensitive=False)
         # Database & Cache
-        DATABASE_URL: str
-        REDIS_URL: str
 
         # Security
         AES_SECRET_KEY: str  # Base64-encoded 32-byte key for AES-GCM
@@ -46,8 +44,6 @@ except Exception:
     load_dotenv(dotenv_path=str(ENV_PATH), override=False)
 
     class Settings(BaseModel):
-        DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-        REDIS_URL: str = os.getenv("REDIS_URL", "")
         AES_SECRET_KEY: str = os.getenv("AES_SECRET_KEY", "")
         JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
         JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")

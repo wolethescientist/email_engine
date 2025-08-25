@@ -6,7 +6,7 @@ export default function ConnectionPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState({
-    email: '', password: '',
+    email: '', password: '', access_token: '',
     imap_host: '', imap_port: 993,
     smtp_host: '', smtp_port: 465,
   })
@@ -14,38 +14,24 @@ export default function ConnectionPage() {
   const [error, setError] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
 
-  // Detect autofilled values and sync with React state
   useEffect(() => {
     const checkAutofill = () => {
       if (!formRef.current) return
-      
       const inputs = formRef.current.querySelectorAll('input')
       const updates: any = {}
       let hasUpdates = false
-
       inputs.forEach((input) => {
         const name = input.name
         const value = input.value
-        
         if (value && !form[name as keyof typeof form]) {
-          if (name.includes('port')) {
-            updates[name] = Number(value)
-          } else {
-            updates[name] = value
-          }
+          if (name.includes('port')) updates[name] = Number(value)
+          else updates[name] = value
           hasUpdates = true
         }
       })
-
-      if (hasUpdates) {
-        setForm(prev => ({ ...prev, ...updates }))
-      }
+      if (hasUpdates) setForm(prev => ({ ...prev, ...updates }))
     }
-
-    // Check immediately and after a short delay for autofill
-    checkAutofill()
-    const timer = setTimeout(checkAutofill, 100)
-    
+    checkAutofill(); const timer = setTimeout(checkAutofill, 100)
     return () => clearTimeout(timer)
   }, [])
 
@@ -59,24 +45,22 @@ export default function ConnectionPage() {
     setError(null)
     setLoading(true)
     try {
-      await login(form)
+      const payload: any = { ...form }
+      if (!payload.access_token) delete payload.access_token
+      if (!payload.password) delete payload.password
+      await login(payload)
       navigate('/mailbox')
     } catch (err: any) {
       let msg = err?.response?.data?.detail || 'Connection failed. Check credentials and servers.'
-      
-      // Provide more user-friendly error messages
       if (msg.includes('IMAP authentication failed') || msg.includes('IMAP login failed')) {
-        msg = 'Email authentication failed. Please check your email and password, and ensure IMAP is enabled for your account.'
+        msg = 'Email authentication failed. Check your credentials and ensure IMAP is enabled.'
       } else if (msg.includes('SMTP login failed')) {
-        msg = 'SMTP authentication failed. Please check your email and password, and ensure SMTP is enabled for your account.'
-      } else if (msg.includes('connection failed') || msg.includes('timeout')) {
-        msg = 'Connection failed. Please check your server settings and internet connection.'
+        msg = 'SMTP authentication failed. Check your credentials and ensure SMTP is enabled.'
+      } else if (msg.includes('Provide either password or access_token')) {
+        msg = 'Provide either a password or an OAuth2 access token.'
       }
-      
       setError(msg)
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   return (
@@ -112,29 +96,15 @@ export default function ConnectionPage() {
             <div className="space-y-4">
               <div>
                 <label className="form-label">Email Address</label>
-                <input 
-                  name="email" 
-                  type="email" 
-                  required 
-                  value={form.email} 
-                  onChange={onChange} 
-                  autoComplete="username" 
-                  className="form-input" 
-                  placeholder="your.email@example.com"
-                />
+                <input name="email" type="email" required value={form.email} onChange={onChange} autoComplete="username" className="form-input" placeholder="your.email@example.com" />
               </div>
               <div>
-                <label className="form-label">Password</label>
-                <input 
-                  name="password" 
-                  type="password" 
-                  required 
-                  value={form.password} 
-                  onChange={onChange} 
-                  autoComplete="new-password" 
-                  className="form-input" 
-                  placeholder="Your email password"
-                />
+                <label className="form-label">Password (or leave empty if using OAuth2)</label>
+                <input name="password" type="password" value={form.password} onChange={onChange} autoComplete="new-password" className="form-input" placeholder="Your email password" />
+              </div>
+              <div>
+                <label className="form-label">OAuth2 Access Token (optional)</label>
+                <input name="access_token" type="text" value={form.access_token} onChange={onChange} className="form-input" placeholder="Paste OAuth2 access token (XOAUTH2)" />
               </div>
             </div>
 
@@ -143,49 +113,19 @@ export default function ConnectionPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="form-label">IMAP Host</label>
-                  <input 
-                    name="imap_host" 
-                    required 
-                    value={form.imap_host} 
-                    onChange={onChange} 
-                    className="form-input" 
-                    placeholder="imap.gmail.com"
-                  />
+                  <input name="imap_host" required value={form.imap_host} onChange={onChange} className="form-input" placeholder="imap.gmail.com" />
                 </div>
                 <div>
                   <label className="form-label">IMAP Port</label>
-                  <input 
-                    name="imap_port" 
-                    type="number" 
-                    required 
-                    value={form.imap_port} 
-                    onChange={onChange} 
-                    className="form-input" 
-                    placeholder="993"
-                  />
+                  <input name="imap_port" type="number" required value={form.imap_port} onChange={onChange} className="form-input" placeholder="993" />
                 </div>
                 <div>
                   <label className="form-label">SMTP Host</label>
-                  <input 
-                    name="smtp_host" 
-                    required 
-                    value={form.smtp_host} 
-                    onChange={onChange} 
-                    className="form-input" 
-                    placeholder="smtp.gmail.com"
-                  />
+                  <input name="smtp_host" required value={form.smtp_host} onChange={onChange} className="form-input" placeholder="smtp.gmail.com" />
                 </div>
                 <div>
                   <label className="form-label">SMTP Port</label>
-                  <input 
-                    name="smtp_port" 
-                    type="number" 
-                    required 
-                    value={form.smtp_port} 
-                    onChange={onChange} 
-                    className="form-input" 
-                    placeholder="587"
-                  />
+                  <input name="smtp_port" type="number" required value={form.smtp_port} onChange={onChange} className="form-input" placeholder="465 or 587" />
                 </div>
               </div>
             </div>

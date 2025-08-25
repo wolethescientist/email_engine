@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import DOMPurify from 'dompurify'
-import { archiveEmail, deleteEmail, getEmail, markRead, EmailDetail, downloadAttachment } from '@api/api'
+import { archiveEmail, unarchiveEmail, deleteEmail, getEmail, markRead, EmailDetail, downloadAttachment } from '@api/api'
 import { Loading, ErrorState } from '@components/States'
 
 export default function EmailDetailPage() {
@@ -11,6 +11,21 @@ export default function EmailDetailPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const getNormalizedFolder = () => {
+    const params = new URLSearchParams(window.location.search)
+    const folder = params.get('folder') || undefined
+    if (!folder) return undefined
+    const map: Record<string, string> = {
+      inbox: 'INBOX',
+      sent: 'Sent',
+      drafts: 'Drafts',
+      trash: 'Trash',
+      archive: 'Archive',
+      spam: 'Spam',
+    }
+    return map[folder.toLowerCase()] || folder
+  }
+
   const load = async () => {
     if (!id) return
     setLoading(true)
@@ -18,8 +33,7 @@ export default function EmailDetailPage() {
     try {
       const params = new URLSearchParams(window.location.search)
       const folder = params.get('folder') || undefined
-      const source = params.get('source') || undefined
-      const res = await getEmail(Number(id), folder, source)
+      const res = await getEmail(Number(id), folder)
       setEmail(res.data)
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Failed to load email')
@@ -30,22 +44,61 @@ export default function EmailDetailPage() {
 
   useEffect(() => { load() }, [id])
 
+  const [actionLoading, setActionLoading] = useState(false)
   const doMarkRead = async (read: boolean) => {
     if (!id) return
-    await markRead(Number(id), read)
-    load()
+    try {
+      setActionLoading(true)
+      const folder = getNormalizedFolder()
+      await markRead(Number(id), read, folder)
+      await load()
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'Failed to update read status')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const doArchive = async () => {
     if (!id) return
-    await archiveEmail(Number(id))
-    navigate('/mailbox')
+    try {
+      setActionLoading(true)
+      const folder = getNormalizedFolder()
+      await archiveEmail(Number(id), folder)
+      navigate('/mailbox')
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'Failed to archive email')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const doUnarchive = async () => {
+    if (!id) return
+    try {
+      setActionLoading(true)
+      const folder = getNormalizedFolder()
+      await unarchiveEmail(Number(id), folder || 'archive')
+      navigate('/mailbox')
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'Failed to unarchive email')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const doDelete = async () => {
     if (!id) return
-    await deleteEmail(Number(id))
-    navigate('/mailbox')
+    try {
+      setActionLoading(true)
+      const folder = getNormalizedFolder()
+      await deleteEmail(Number(id), folder)
+      navigate('/mailbox')
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || 'Failed to delete email')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const safeHtml = useMemo(() => DOMPurify.sanitize(email?.body || ''), [email?.body])
@@ -59,11 +112,15 @@ export default function EmailDetailPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold">{email.subject || '(No subject)'}</h1>
         <div className="space-x-2">
-          <button onClick={() => doMarkRead(!email.is_read)} className="px-3 py-1 rounded border">
+          <button onClick={() => doMarkRead(!email.is_read)} disabled={actionLoading} className="px-3 py-1 rounded border disabled:opacity-60">
             {email.is_read ? 'Mark Unread' : 'Mark Read'}
           </button>
-          <button onClick={doArchive} className="px-3 py-1 rounded border">Archive</button>
-          <button onClick={doDelete} className="px-3 py-1 rounded border text-red-600">Delete</button>
+          { (new URLSearchParams(window.location.search).get('folder') || '').toLowerCase() === 'archive' ? (
+            <button onClick={doUnarchive} disabled={actionLoading} className="px-3 py-1 rounded border disabled:opacity-60">Unarchive</button>
+          ) : (
+            <button onClick={doArchive} disabled={actionLoading} className="px-3 py-1 rounded border disabled:opacity-60">Archive</button>
+          )}
+          <button onClick={doDelete} disabled={actionLoading} className="px-3 py-1 rounded border text-red-600 disabled:opacity-60">Delete</button>
         </div>
       </div>
 
@@ -95,7 +152,8 @@ export default function EmailDetailPage() {
                   onClick={async () => {
                     if (!id) return
                     try {
-                      const res = await downloadAttachment(Number(id), a)
+                      const folder = getNormalizedFolder()
+                      const res = await downloadAttachment(Number(id), a, folder)
                       const blob = new Blob([res.data])
                       const url = window.URL.createObjectURL(blob)
                       const link = document.createElement('a')

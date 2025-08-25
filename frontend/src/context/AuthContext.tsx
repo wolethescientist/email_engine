@@ -1,53 +1,36 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
-import { ConnectRequest, connect } from '@api/api'
+import React, { createContext, useContext, useState } from 'react'
+import { ConnectRequest, connect, setCredentials } from '@api/api'
 
 interface AuthContextType {
-  token: string | null
-  role: 'admin' | 'user' | null
+  connected: boolean
   login: (payload: ConnectRequest) => Promise<void>
   logout: () => void
 }
 
 const AuthContext = createContext<AuthContextType>({
-  token: null,
-  role: null,
+  connected: false,
   login: async () => {},
   logout: () => {},
 })
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
-  const [role, setRole] = useState<'admin' | 'user' | null>(localStorage.getItem('role') as any)
-
-  useEffect(() => {
-    if (token) localStorage.setItem('token', token)
-    else localStorage.removeItem('token')
-  }, [token])
-
-  useEffect(() => {
-    if (role) localStorage.setItem('role', role)
-    else localStorage.removeItem('role')
-  }, [role])
+  const [connected, setConnected] = useState<boolean>(!!localStorage.getItem('creds'))
 
   const login = async (payload: ConnectRequest) => {
-    // Clear any existing auth data before attempting new connection
-    setToken(null)
-    setRole(null)
-    localStorage.removeItem('token')
-    localStorage.removeItem('role')
-    
-    const { data } = await connect(payload)
-    setToken(data.access_token)
-    setRole(data.role)
+    // Validate connection (password or access_token)
+    await connect(payload)
+    // Persist credentials for stateless requests
+    setCredentials(payload)
+    setConnected(true)
   }
 
   const logout = () => {
-    setToken(null)
-    setRole(null)
+    setCredentials(null)
+    setConnected(false)
   }
 
   return (
-    <AuthContext.Provider value={{ token, role, login, logout }}>
+    <AuthContext.Provider value={{ connected, login, logout }}>
       {children}
     </AuthContext.Provider>
   )

@@ -16,3 +16,10 @@ Vite proxy forwards `/api/*` → `http://localhost:8000/*`.
 - Mailbox tabs: Inbox, Sent, Drafts, Trash, Archive
 - Email detail with actions (read/unread, archive, delete)
 - Compose with attachments (base64)
+
+
+2. Also remove the frontend and push only the backend code to github 
+5. remove the unnecessary files from the project and make it more clean.
+6. push to the backend only as a repo so it will be as an API. There is no need for frontend. 
+7. also add the documentation on how to use the api. 
+8. include exception handling to help them debug.

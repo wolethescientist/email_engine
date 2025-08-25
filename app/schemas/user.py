@@ -8,16 +8,20 @@ class UserRole(str, Enum):
     user = "user"
 
 
-class ConnectionRequest(BaseModel):
+class Credentials(BaseModel):
     email: EmailStr
-    password: SecretStr = Field(..., description="Email account password (will be encrypted at rest)")
+    password: Optional[SecretStr] = Field(None, description="Email account password")
+    access_token: Optional[str] = Field(None, description="OAuth2 access token for XOAUTH2")
     imap_host: str
     imap_port: int = 993
     smtp_host: str
     smtp_port: int = 465
 
 
-class ConnectionResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    role: UserRole = UserRole.user
+class ConnectValidateRequest(Credentials):
+    pass
+
+
+class ConnectValidateResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None

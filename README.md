@@ -44,9 +44,6 @@ ConnexxionEngine is a secure, professional email hosting service with a clean, m
    cp .env.example .env
    # Edit .env with your database and Redis URLs, and generate secret keys
    
-   # Run database migrations
-   alembic upgrade head
-   
    # Start backend
    uvicorn app.main:app --reload
    ```
@@ -114,9 +111,8 @@ docker run -p 8000:8000 connexxionengine
 1. Set up PostgreSQL and Redis
 2. Copy files to server
 3. Install dependencies: `pip install -r requirements.txt`
-4. Set environment variables
-5. Run migrations: `alembic upgrade head`
-6. Start with: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
+4. Set environment variables  
+5. Start with: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 
 ## Environment Variables
 

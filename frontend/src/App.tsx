@@ -12,23 +12,23 @@ import LandingLayout from '@components/LandingLayout'
 import { AuthProvider, useAuth } from '@context/AuthContext'
 
 function PrivateRoute({ children }: { children: JSX.Element }) {
-  const { token } = useAuth()
-  return token ? children : <Navigate to="/" replace />
+  const { connected } = useAuth()
+  return connected ? children : <Navigate to="/" replace />
 }
 
 function PublicRoute({ children }: { children: JSX.Element }) {
-  const { token } = useAuth()
-  return token ? <Navigate to="/mailbox" replace /> : children
+  const { connected } = useAuth()
+  return connected ? <Navigate to="/mailbox" replace /> : children
 }
 
 function AppLayout({ children }: { children: React.ReactNode }) {
-  const { token, logout } = useAuth()
+  const { connected, logout } = useAuth()
   return (
     <div className="min-h-screen flex flex-col">
       <header className="bg-white/80 backdrop-blur-lg border-b border-secondary-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <Link to={token ? "/mailbox" : "/"} className="flex items-center space-x-3">
+            <Link to={connected ? "/mailbox" : "/"} className="flex items-center space-x-3">
               <div className="w-8 h-8 bg-gradient-green rounded-lg flex items-center justify-center">
                 <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
@@ -40,7 +40,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
               </span>
             </Link>
             <nav className="flex items-center space-x-6">
-              {token ? (
+              {connected ? (
                 <>
                   <Link to="/mailbox" className="btn-ghost">
                     <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">

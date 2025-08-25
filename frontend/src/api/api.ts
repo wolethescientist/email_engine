@@ -1,17 +1,51 @@
-import axios from 'axios'
+import axios, { AxiosHeaders } from 'axios'
 
-// Use environment variable for production, fallback to proxy for development
+// Base URL: env or Vite proxy
 const baseURL = import.meta.env.VITE_API_BASE_URL 
   ? `${import.meta.env.VITE_API_BASE_URL}` 
-  : '/api' // Vite proxy rewrites to FastAPI in development
+  : '/api'
 
 export const api = axios.create({ baseURL })
 
+// === Credentials handling (stateless) ===
+export interface Credentials {
+  email: string
+  password?: string | null
+  access_token?: string | null
+  imap_host: string
+  imap_port: number
+  smtp_host: string
+  smtp_port: number
+}
+
+let storedCreds: Credentials | null = null
+
+export const getCredentials = (): Credentials | null => {
+  if (storedCreds) return storedCreds
+  const raw = localStorage.getItem('creds')
+  if (!raw) return null
+  try { storedCreds = JSON.parse(raw) as Credentials } catch {}
+  return storedCreds
+}
+
+export const setCredentials = (creds: Credentials | null) => {
+  storedCreds = creds
+  if (creds) localStorage.setItem('creds', JSON.stringify(creds))
+  else localStorage.removeItem('creds')
+}
+
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  const isConnect = config.url?.endsWith('/connect') && config.method?.toLowerCase() === 'post'
-  if (token && !isConnect) {
-    config.headers.Authorization = `Bearer ${token}`
+  const creds = getCredentials()
+  if (creds) {
+    const headers = AxiosHeaders.from(config.headers || {})
+    headers.set('X-IMAP-Host', creds.imap_host)
+    headers.set('X-IMAP-Port', String(creds.imap_port))
+    headers.set('X-SMTP-Host', creds.smtp_host)
+    headers.set('X-SMTP-Port', String(creds.smtp_port))
+    headers.set('X-Email', creds.email)
+    if (creds.password) headers.set('X-Password', creds.password)
+    if (creds.access_token) headers.set('X-Access-Token', creds.access_token)
+    config.headers = headers
   }
   return config
 })
@@ -19,46 +53,23 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    // Auto-logout on 401 (token expired/invalid)
-    if (error?.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('role')
-      if (typeof window !== 'undefined') {
-        window.location.href = '/'
-      }
-    }
-    
-    // Handle IMAP authentication failures (400 status with specific message)
     if (error?.response?.status === 400 && 
-        error?.response?.data?.detail?.includes('IMAP authentication failed')) {
-      // Clear stored credentials and redirect to reconnect
-      localStorage.removeItem('token')
-      localStorage.removeItem('role')
+        typeof error?.response?.data?.detail === 'string' &&
+        error.response.data.detail.includes('IMAP authentication failed')) {
+      // Clear creds and redirect to connect
+      setCredentials(null)
       if (typeof window !== 'undefined') {
-        // Show a user-friendly message before redirecting
-        alert('Your email connection has expired. Please reconnect your email account.')
+        alert('Your email connection failed. Please reconnect your email account.')
         window.location.href = '/connect'
       }
     }
-    
     return Promise.reject(error)
   }
 )
 
-export interface ConnectRequest {
-  email: string
-  password: string
-  imap_host: string
-  imap_port: number
-  smtp_host: string
-  smtp_port: number
-}
-
-export interface ConnectResponse {
-  access_token: string
-  token_type: 'bearer'
-  role: 'admin' | 'user'
-}
+// === API types ===
+export interface ConnectRequest extends Credentials {}
+export interface ConnectResponse { success: boolean; message?: string }
 
 export interface AttachmentIn {
   filename: string
@@ -75,7 +86,7 @@ export interface EmailComposeRequest {
   attachments: AttachmentIn[]
 }
 
-export interface DraftResponse { id: number }
+export interface DraftResponse { success: boolean; id?: number | null; message?: string }
 
 export interface EmailItem {
   id: number
@@ -84,7 +95,6 @@ export interface EmailItem {
   from_address?: string
   to_addresses: string[]
   is_read: boolean
-  // Optional: if backend adds created_at or date later
   created_at?: string
 }
 
@@ -108,49 +118,52 @@ export interface PaginatedEmails {
   items: EmailItem[]
 }
 
-export const connect = (payload: ConnectRequest) =>
-  api.post<ConnectResponse>('/connect', payload)
+// === API functions ===
+export const connect = (payload: ConnectRequest) => api.post<ConnectResponse>('/connect', payload)
 
-export const getInbox = (page=1, size=50) =>
-  api.get<PaginatedEmails>(`/emails/inbox`, { params: { page, size } })
+// Mailbox listing: POST endpoints, pass page/size via query; credentials via headers
+export const getInbox = (page=1, size=50) => api.post<PaginatedEmails>(`/emails/inbox`, undefined, { params: { page, size } })
+export const getSent = (page=1, size=50) => api.post<PaginatedEmails>(`/emails/sent`, undefined, { params: { page, size } })
+export const getDrafts = (page=1, size=50) => api.post<PaginatedEmails>(`/emails/drafts`, undefined, { params: { page, size } })
+export const getTrash = (page=1, size=50) => api.post<PaginatedEmails>(`/emails/trash`, undefined, { params: { page, size } })
+export const getArchive = (page=1, size=50) => api.post<PaginatedEmails>(`/emails/archive`, undefined, { params: { page, size } })
+export const getSpam = (page=1, size=50) => api.post<PaginatedEmails>(`/emails/spam`, undefined, { params: { page, size } })
 
-export const getSent = (page=1, size=50, source: 'db' | 'imap' = 'db') =>
-  api.get<PaginatedEmails>(`/emails/sent`, { params: { page, size, source } })
-
-export const getDrafts = (page=1, size=50) =>
-  api.get<PaginatedEmails>(`/emails/drafts`, { params: { page, size } })
-
-export const getTrash = (page=1, size=50) =>
-  api.get<PaginatedEmails>(`/emails/trash`, { params: { page, size } })
-
-export const getArchive = (page=1, size=50) =>
-  api.get<PaginatedEmails>(`/emails/archive`, { params: { page, size } })
-
-export const getSpam = (page=1, size=50) =>
-  api.get<PaginatedEmails>(`/emails/spam`, { params: { page, size } })
-
-export const getEmail = (id: number, folder?: string, source?: string) => {
+// Email detail
+export const getEmail = (id: number, folder?: string) => {
   const params: any = {}
   if (folder) params.folder = folder
-  if (source) params.source = source
-  return api.get<EmailDetail>(`/emails/${id}`, { params })
+  return api.post<EmailDetail>(`/emails/${id}`, undefined, { params })
 }
 
-export const markRead = (id: number, read: boolean) =>
-  api.patch(`/emails/${id}/read`, null, { params: { read } })
+// Modify operations
+export const markRead = (id: number, read: boolean, folder?: string) => {
+  const creds = getCredentials()
+  if (!creds) throw new Error('Not connected')
+  return api.post(`/emails/${id}/read`, { creds, folder: folder || 'inbox', read })
+}
 
-export const archiveEmail = (id: number) =>
-  api.patch(`/emails/${id}/archive`)
+export const archiveEmail = (id: number, folder?: string) => api.post(`/emails/${id}/archive`, undefined, { params: { ...(folder ? { folder } : {}) } })
+export const unarchiveEmail = (id: number, folder?: string) => api.post(`/emails/${id}/unarchive`, undefined, { params: { ...(folder ? { folder } : {}) } })
+export const deleteEmail = (id: number, folder?: string) => api.post(`/emails/${id}/delete`, undefined, { params: { ...(folder ? { folder } : {}) } })
 
-export const deleteEmail = (id: number) =>
-  api.delete(`/emails/${id}`)
+// Compose / Send — include creds in body
+export const saveDraft = (payload: EmailComposeRequest) => {
+  const creds = getCredentials()
+  if (!creds) throw new Error('Not connected')
+  return api.post<DraftResponse>('/emails/compose', { ...payload, creds })
+}
 
-export const saveDraft = (payload: EmailComposeRequest) =>
-  api.post<DraftResponse>('/emails/compose', payload)
+export const sendEmail = (payload: EmailComposeRequest & { draft_id?: number }) => {
+  const creds = getCredentials()
+  if (!creds) throw new Error('Not connected')
+  return api.post<EmailDetail>('/emails/send', { ...payload, creds })
+}
 
-export const sendEmail = (payload: EmailComposeRequest & { draft_id?: number }) =>
-  api.post<EmailDetail>('/emails/send', payload)
-
-export const downloadAttachment = (emailId: number, filename: string) => {
-  return api.get(`/emails/${emailId}/attachments/${encodeURIComponent(filename)}`, { responseType: 'blob' })
+// Attachments
+export const downloadAttachment = (emailId: number, filename: string, folder?: string) => {
+  return api.post(`/emails/${emailId}/attachments/${encodeURIComponent(filename)}`,
+    undefined,
+    { responseType: 'blob', params: { ...(folder ? { folder } : {}) } }
+  )
 }

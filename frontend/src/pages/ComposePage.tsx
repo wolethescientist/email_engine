@@ -53,7 +53,8 @@ export default function ComposePage() {
     setLoading(true); setError(null); setInfo(null)
     try {
       const res = await saveDraft(buildPayload())
-      setInfo(`Draft saved with id ${res.data.id}`)
+      const msg = res.data.message || 'Draft saved to IMAP'
+      setInfo(msg)
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Failed to save draft')
     } finally { setLoading(false) }

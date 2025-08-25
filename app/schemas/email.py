@@ -1,5 +1,6 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field, EmailStr
+from .user import Credentials
 
 
 class AttachmentIn(BaseModel):
@@ -9,6 +10,7 @@ class AttachmentIn(BaseModel):
 
 
 class EmailComposeRequest(BaseModel):
+    creds: Credentials
     subject: Optional[str] = None
     body: Optional[str] = None
     to: List[EmailStr] = []
@@ -18,7 +20,9 @@ class EmailComposeRequest(BaseModel):
 
 
 class DraftResponse(BaseModel):
-    id: int
+    success: bool
+    id: Optional[int] = None
+    message: Optional[str] = None
 
 
 class SendEmailRequest(EmailComposeRequest):
@@ -35,7 +39,7 @@ class EmailItem(BaseModel):
 
 
 class EmailDetail(BaseModel):
-    id: int
+    id: Optional[int] = None
     folder: str
     subject: Optional[str] = None
     body: Optional[str] = None
@@ -52,3 +56,23 @@ class PaginatedEmails(BaseModel):
     size: int
     total: int
     items: List[EmailItem]
+
+
+# Bodies for endpoints that formerly used GET — now POST with body credentials
+class ListRequest(BaseModel):
+    creds: Credentials
+    page: int = Field(1, ge=1)
+    size: int = Field(50, ge=1, le=200)
+
+
+class EmailDetailRequest(BaseModel):
+    creds: Credentials
+    folder: str = "inbox"
+
+
+class ModifyEmailRequest(EmailDetailRequest):
+    read: Optional[bool] = None
+
+
+class AttachmentDownloadRequest(EmailDetailRequest):
+    pass

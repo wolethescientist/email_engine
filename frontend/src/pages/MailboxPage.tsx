@@ -30,7 +30,7 @@ export default function MailboxPage() {
     try {
       let res
       if (key === 'inbox') res = await getInbox(p, size)
-      else if (key === 'sent') res = await getSent(p, size, 'imap') // switch between 'db' or 'imap' as you prefer
+      else if (key === 'sent') res = await getSent(p, size)
       else if (key === 'drafts') res = await getDrafts(p, size)
       else if (key === 'spam') res = await getSpam(p, size)
       else if (key === 'trash') res = await getTrash(p, size)
@@ -93,11 +93,7 @@ export default function MailboxPage() {
 
           <div className="divide-y divide-secondary-100">
             {data?.items.map((item) => {
-              // For sent emails, we need to pass the source parameter to match how we fetched them
-              const linkParams = active === 'sent' 
-                ? `folder=${active}&source=imap` 
-                : `folder=${active}`
-              
+              const linkParams = `folder=${active}`
               return (
                 <Link 
                   key={item.id} 
