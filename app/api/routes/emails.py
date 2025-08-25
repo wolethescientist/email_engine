@@ -19,7 +19,6 @@ from ...schemas.email import (
 )
 from ...schemas.user import Credentials
 from ...services.email_service import (
-    _deserialize_addresses,
     append_draft_imap,
     download_attachment_imap,
     get_email_imap,
@@ -154,9 +153,9 @@ async def send_mail(request: Request, body: SendEmailRequest):
             subject=getattr(sent, 'subject', None),
             body=getattr(sent, 'body', None),
             from_address=getattr(sent, 'from_address', None),
-            to_addresses=_deserialize_addresses(getattr(sent, 'to_addresses', '[]')),
-            cc_addresses=_deserialize_addresses(getattr(sent, 'cc_addresses', '[]')),
-            bcc_addresses=_deserialize_addresses(getattr(sent, 'bcc_addresses', '[]')),
+            to_addresses=getattr(sent, 'to_addresses', []),
+            cc_addresses=getattr(sent, 'cc_addresses', []),
+            bcc_addresses=getattr(sent, 'bcc_addresses', []),
             is_read=getattr(sent, 'is_read', True),
             attachments=[],
         )
@@ -174,7 +173,8 @@ def _list_handler(folder_key: str):
         try:
             page = body.page if body else int(request.query_params.get("page", 1))
             size = body.size if body else int(request.query_params.get("size", 50))
-            payload = list_mailbox(user, folder=folder_key, page=page, size=size)
+            refresh = body.refresh if body else str(request.query_params.get("refresh", "false")).lower() == "true"
+            payload = list_mailbox(user, folder=folder_key, page=page, size=size, refresh=refresh)
             items = [EmailItem(**item) for item in payload.get("items", [])]
             return PaginatedEmails(page=page, size=size, total=payload.get("total", 0), items=items)
         except ValueError as e:

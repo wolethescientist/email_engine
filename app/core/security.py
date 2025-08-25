@@ -45,8 +45,6 @@ def decrypt_secret(ciphertext_b64: str) -> str:
     plain = aesgcm.decrypt(nonce, cipher, associated_data=None)
     return plain.decode("utf-8")
 
-# ==== JWT utilities ====
-
 def create_access_token(*, subject: str | int, role: str, expires_minutes: int | None = None) -> str:
     settings = get_settings()
     expire_delta = timedelta(minutes=expires_minutes or settings.JWT_EXPIRES_MINUTES)

@@ -329,19 +329,6 @@ def resolve_special_folder(user: UserLike, key: str) -> str | None:
     return defaults.get(k)
 
 
-# Address helpers
-
-def _serialize_addresses(addrs: List[str]) -> str:
-    return json.dumps(addrs) if addrs else "[]"
-
-
-def _deserialize_addresses(s: Optional[str]) -> List[str]:
-    if not s:
-        return []
-    try:
-        return json.loads(s)
-    except Exception:
-        return []
 
 
 # Drafts
@@ -437,9 +424,9 @@ def send_email(
         'subject': subject,
         'body': body,
         'from_address': user.email,
-        'to_addresses': _serialize_addresses(to),
-        'cc_addresses': _serialize_addresses(cc),
-        'bcc_addresses': _serialize_addresses(bcc),
+        'to_addresses': to,
+        'cc_addresses': cc,
+        'bcc_addresses': bcc,
         'is_read': True,
         'attachments': [],
     })()
@@ -459,7 +446,7 @@ def _key_from_folder_hint(folder: str) -> str | None:
     return None
 
 
-def list_mailbox(user: UserLike, folder: str, page: int, size: int):
+def list_mailbox(user: UserLike, folder: str, page: int, size: int, refresh: bool = False):
     """Return (total, items) for a mailbox using IMAP.
     - Accepts either exact provider path or a standardized hint (e.g., "inbox", "sent").
     - If direct select fails, resolves to provider-specific path via discovery.
@@ -479,6 +466,15 @@ def list_mailbox(user: UserLike, folder: str, page: int, size: int):
                     status, _ = imap.select(effective_folder, readonly=True)
         if status != "OK":
             return {"total": 0, "items": []}
+
+        if refresh:
+            # NOOP is a standard way to ask the server for any pending updates (e.g., new mail)
+            # without changing the selected mailbox state. This forces a refresh.
+            try:
+                imap.noop()
+            except Exception:
+                # Not fatal, proceed anyway
+                pass
 
         # Use UIDs consistently
         status, data = imap.uid("SEARCH", None, "ALL")

@@ -2,7 +2,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 
 from ...schemas.user import ConnectValidateRequest, ConnectValidateResponse
-from ...services.connection_service import validate_connection
+from ...services.email_service import _make_imap, _make_smtp
 from ...core.config import get_settings
 
 # Setup logger
@@ -23,15 +23,32 @@ def connect(body: ConnectValidateRequest):
                 detail="Provide either password or access_token",
             )
 
-        validate_connection(
-            email=str(body.email),
-            password=body.password.get_secret_value() if body.password else None,
-            imap_host=body.imap_host,
-            imap_port=body.imap_port,
-            smtp_host=body.smtp_host,
-            smtp_port=body.smtp_port,
-            access_token=body.access_token,
-        )
+        # Create a temporary user-like object for validation
+        class ConnTestUser:
+            email = str(body.email)
+            password = body.password.get_secret_value() if body.password else None
+            access_token = body.access_token
+            imap_host = body.imap_host
+            imap_port = body.imap_port
+            smtp_host = body.smtp_host
+            smtp_port = body.smtp_port
+            encrypted_password = '' # for UserLike protocol compatibility
+
+        user = ConnTestUser()
+
+        # Validate IMAP
+        try:
+            imap = _make_imap(user)
+            imap.logout()
+        except Exception as e:
+            raise ValueError(f"IMAP validation failed: {e}")
+
+        # Validate SMTP
+        try:
+            smtp = _make_smtp(user)
+            smtp.quit()
+        except Exception as e:
+            raise ValueError(f"SMTP validation failed: {e}")
 
         return ConnectValidateResponse(success=True, message="Connection validated")
 

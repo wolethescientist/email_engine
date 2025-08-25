@@ -10,8 +10,6 @@ try:
     class Settings(BaseSettings):
         # Point to absolute .env to avoid CWD issues
         model_config = SettingsConfigDict(env_file=str(ENV_PATH), env_file_encoding="utf-8", case_sensitive=False)
-        # Database & Cache
-
         # Security
         AES_SECRET_KEY: str  # Base64-encoded 32-byte key for AES-GCM
         JWT_SECRET_KEY: str  # HS256 secret

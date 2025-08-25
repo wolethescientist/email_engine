@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .core.config import get_settings
 from .api.routes.connect import router as connect_router
 from .api.routes.emails import router as emails_router
+from .api.routes.idle import router as idle_router
 
 settings = get_settings()
 app = FastAPI(title=settings.APP_NAME)
@@ -23,6 +24,7 @@ app.add_middleware(
 # Routers
 app.include_router(connect_router)
 app.include_router(emails_router)
+app.include_router(idle_router)
 
 
 @app.get("/healthz")
