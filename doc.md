@@ -518,6 +518,453 @@ emailManager.fetchEmails('inbox')
     console.error('Error:', error.message);
   });
 ```
+### `POST /emails/inbox`
+
+**Purpose**: Retrieves a paginated list of emails from the inbox folder. This is typically the primary folder where new incoming emails are stored.
+
+**Use Case**: Display the main email list in your application. Perfect for the default view when users open your email client.
+
+**Request Body:**
+```json
+{
+  "creds": { ... },
+  "page": 1,
+  "size": 25
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "page": 1,
+  "size": 25,
+  "total": 147,
+  "items": [
+    {
+      "id": 1001,
+      "subject": "Weekly Team Meeting",
+      "from_address": "manager@company.com",
+      "to_addresses": ["team@company.com"],
+      "is_read": false,
+      "timestamp": "2024-01-15T14:30:00Z",
+      "has_attachments": true
+    }
+  ]
+}
+```
+
+**Code Example (Node.js):**
+```javascript
+const axios = require('axios');
+
+class InboxManager {
+  constructor(credentials) {
+    this.credentials = credentials;
+  }
+
+  async getInboxEmails(page = 1, size = 25) {
+    try {
+      const response = await axios.post('http://localhost:8000/emails/inbox', {
+        creds: this.credentials,
+        page: page,
+        size: size
+      });
+      
+      console.log(`Loaded ${response.data.items.length} inbox emails (Page ${page})`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch inbox:', error.response?.data?.detail || error.message);
+      throw error;
+    }
+  }
+
+  async getUnreadEmails() {
+    const result = await this.getInboxEmails();
+    const unreadEmails = result.items.filter(email => !email.is_read);
+    console.log(`Found ${unreadEmails.length} unread emails`);
+    return unreadEmails;
+  }
+}
+
+// Usage
+const credentials = { /* your credentials */ };
+const inboxManager = new InboxManager(credentials);
+
+inboxManager.getInboxEmails()
+  .then(result => {
+    console.log(`Total inbox emails: ${result.total}`);
+  });
+```
+
+### `POST /emails/sent`
+
+**Purpose**: Retrieves emails from the sent folder, showing all emails that have been sent from this account.
+
+**Use Case**: Display sent emails for users to review their outgoing correspondence and track email history.
+
+**Request Body:**
+```json
+{
+  "creds": { ... },
+  "page": 1,
+  "size": 25
+}
+```
+
+**Code Example (Node.js):**
+```javascript
+const axios = require('axios');
+
+class SentEmailsManager {
+  constructor(credentials) {
+    this.credentials = credentials;
+  }
+
+  async getSentEmails(page = 1, size = 25) {
+    try {
+      const response = await axios.post('http://localhost:8000/emails/sent', {
+        creds: this.credentials,
+        page: page,
+        size: size
+      });
+      
+      console.log(`Loaded ${response.data.items.length} sent emails`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch sent emails:', error.response?.data?.detail || error.message);
+      throw error;
+    }
+  }
+
+  async findSentEmailsByRecipient(recipientEmail) {
+    const result = await this.getSentEmails();
+    const filteredEmails = result.items.filter(email => 
+      email.to_addresses.some(addr => addr.includes(recipientEmail))
+    );
+    console.log(`Found ${filteredEmails.length} emails sent to ${recipientEmail}`);
+    return filteredEmails;
+  }
+}
+
+// Usage
+const sentManager = new SentEmailsManager(credentials);
+sentManager.getSentEmails().then(result => {
+  console.log(`You have sent ${result.total} emails`);
+});
+```
+
+### `POST /emails/drafts`
+
+**Purpose**: Retrieves saved email drafts that haven't been sent yet. Essential for draft management functionality.
+
+**Use Case**: Allow users to continue editing unsent emails, manage draft storage, and provide "save draft" functionality.
+
+**Request Body:**
+```json
+{
+  "creds": { ... },
+  "page": 1,
+  "size": 25
+}
+```
+
+**Code Example (Node.js):**
+```javascript
+const axios = require('axios');
+
+class DraftsManager {
+  constructor(credentials) {
+    this.credentials = credentials;
+  }
+
+  async getDrafts(page = 1, size = 25) {
+    try {
+      const response = await axios.post('http://localhost:8000/emails/drafts', {
+        creds: this.credentials,
+        page: page,
+        size: size
+      });
+      
+      console.log(`Found ${response.data.items.length} draft emails`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch drafts:', error.response?.data?.detail || error.message);
+      throw error;
+    }
+  }
+
+  async getOldestDrafts() {
+    const result = await this.getDrafts();
+    const sortedDrafts = result.items.sort((a, b) => 
+      new Date(a.timestamp) - new Date(b.timestamp)
+    );
+    console.log('Oldest drafts first:');
+    sortedDrafts.forEach(draft => {
+      console.log(`- ${draft.subject} (${new Date(draft.timestamp).toLocaleDateString()})`);
+    });
+    return sortedDrafts;
+  }
+
+  async cleanupOldDrafts(daysOld = 30) {
+    const result = await this.getDrafts();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+    
+    const oldDrafts = result.items.filter(draft => 
+      new Date(draft.timestamp) < cutoffDate
+    );
+    
+    console.log(`Found ${oldDrafts.length} drafts older than ${daysOld} days`);
+    return oldDrafts;
+  }
+}
+
+// Usage
+const draftsManager = new DraftsManager(credentials);
+draftsManager.getDrafts().then(result => {
+  console.log(`You have ${result.total} saved drafts`);
+});
+```
+
+### `POST /emails/trash`
+
+**Purpose**: Retrieves emails that have been moved to trash. These are soft-deleted emails that can still be recovered.
+
+**Use Case**: Implement trash/recycle bin functionality, allow users to recover accidentally deleted emails.
+
+**Request Body:**
+```json
+{
+  "creds": { ... },
+  "page": 1,
+  "size": 25
+}
+```
+
+**Code Example (Node.js):**
+```javascript
+const axios = require('axios');
+
+class TrashManager {
+  constructor(credentials) {
+    this.credentials = credentials;
+  }
+
+  async getTrashEmails(page = 1, size = 25) {
+    try {
+      const response = await axios.post('http://localhost:8000/emails/trash', {
+        creds: this.credentials,
+        page: page,
+        size: size
+      });
+      
+      console.log(`Found ${response.data.items.length} emails in trash`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch trash:', error.response?.data?.detail || error.message);
+      throw error;
+    }
+  }
+
+  async getRecentlyDeleted(hours = 24) {
+    const result = await this.getTrashEmails();
+    const cutoffTime = new Date();
+    cutoffTime.setHours(cutoffTime.getHours() - hours);
+    
+    const recentlyDeleted = result.items.filter(email => 
+      new Date(email.timestamp) > cutoffTime
+    );
+    
+    console.log(`${recentlyDeleted.length} emails deleted in last ${hours} hours`);
+    return recentlyDeleted;
+  }
+
+  async emptyTrash() {
+    console.log('⚠️  This would permanently delete all trash emails');
+    console.log('Note: Implement permanent deletion via your email server\'s API');
+    // Implementation would depend on your email server's capabilities
+  }
+}
+
+// Usage
+const trashManager = new TrashManager(credentials);
+trashManager.getTrashEmails().then(result => {
+  console.log(`Trash contains ${result.total} emails`);
+});
+```
+
+### `POST /emails/archive`
+
+**Purpose**: Retrieves archived emails. These are emails that have been moved out of the inbox for organization but are still accessible.
+
+**Use Case**: Implement email archiving functionality, help users organize old emails without deleting them.
+
+**Request Body:**
+```json
+{
+  "creds": { ... },
+  "page": 1,
+  "size": 25
+}
+```
+
+**Code Example (Node.js):**
+```javascript
+const axios = require('axios');
+
+class ArchiveManager {
+  constructor(credentials) {
+    this.credentials = credentials;
+  }
+
+  async getArchivedEmails(page = 1, size = 25) {
+    try {
+      const response = await axios.post('http://localhost:8000/emails/archive', {
+        creds: this.credentials,
+        page: page,
+        size: size
+      });
+      
+      console.log(`Found ${response.data.items.length} archived emails`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch archive:', error.response?.data?.detail || error.message);
+      throw error;
+    }
+  }
+
+  async searchArchive(searchTerm) {
+    const result = await this.getArchivedEmails();
+    const matchingEmails = result.items.filter(email => 
+      email.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      email.from_address.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    console.log(`Found ${matchingEmails.length} archived emails matching "${searchTerm}"`);
+    return matchingEmails;
+  }
+
+  async getArchiveStats() {
+    const result = await this.getArchivedEmails();
+    const stats = {
+      total: result.total,
+      withAttachments: result.items.filter(e => e.has_attachments).length,
+      unread: result.items.filter(e => !e.is_read).length
+    };
+    
+    console.log('Archive Statistics:');
+    console.log(`- Total archived: ${stats.total}`);
+    console.log(`- With attachments: ${stats.withAttachments}`);
+    console.log(`- Still unread: ${stats.unread}`);
+    
+    return stats;
+  }
+}
+
+// Usage
+const archiveManager = new ArchiveManager(credentials);
+archiveManager.getArchivedEmails().then(result => {
+  console.log(`Archive contains ${result.total} emails`);
+});
+```
+
+### `POST /emails/spam`
+
+**Purpose**: Retrieves emails that have been marked as spam or junk. These are emails filtered out from the main inbox.
+
+**Use Case**: Implement spam folder functionality, allow users to review and manage spam emails, recover false positives.
+
+**Request Body:**
+```json
+{
+  "creds": { ... },
+  "page": 1,
+  "size": 25
+}
+```
+
+**Code Example (Node.js):**
+```javascript
+const axios = require('axios');
+
+class SpamManager {
+  constructor(credentials) {
+    this.credentials = credentials;
+  }
+
+  async getSpamEmails(page = 1, size = 25) {
+    try {
+      const response = await axios.post('http://localhost:8000/emails/spam', {
+        creds: this.credentials,
+        page: page,
+        size: size
+      });
+      
+      console.log(`Found ${response.data.items.length} spam emails`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch spam:', error.response?.data?.detail || error.message);
+      throw error;
+    }
+  }
+
+  async reviewSpamEmails() {
+    const result = await this.getSpamEmails();
+    
+    console.log('\n=== SPAM REVIEW ===');
+    result.items.forEach((email, index) => {
+      console.log(`${index + 1}. ${email.subject}`);
+      console.log(`   From: ${email.from_address}`);
+      console.log(`   Date: ${new Date(email.timestamp).toLocaleDateString()}`);
+      console.log('');
+    });
+    
+    return result.items;
+  }
+
+  async getSpamByDomain() {
+    const result = await this.getSpamEmails();
+    const domainCount = {};
+    
+    result.items.forEach(email => {
+      const domain = email.from_address.split('@')[1];
+      domainCount[domain] = (domainCount[domain] || 0) + 1;
+    });
+    
+    const sortedDomains = Object.entries(domainCount)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 10);
+    
+    console.log('Top spam domains:');
+    sortedDomains.forEach(([domain, count]) => {
+      console.log(`- ${domain}: ${count} emails`);
+    });
+    
+    return sortedDomains;
+  }
+
+  async clearOldSpam(daysOld = 30) {
+    const result = await this.getSpamEmails();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+    
+    const oldSpam = result.items.filter(email => 
+      new Date(email.timestamp) < cutoffDate
+    );
+    
+    console.log(`Found ${oldSpam.length} spam emails older than ${daysOld} days`);
+    console.log('⚠️  These could be permanently deleted');
+    
+    return oldSpam;
+  }
+}
+
+// Usage
+const spamManager = new SpamManager(credentials);
+spamManager.getSpamEmails().then(result => {
+  console.log(`Spam folder contains ${result.total} emails`);
+});
+```
 
 ### `POST /emails/{email_id}`
 
@@ -2197,4 +2644,3 @@ This Email Engine API provides comprehensive email management capabilities with:
 - **Production Ready**: Error handling, rate limiting, and best practices
 
 The API is designed for easy integration into web applications, mobile apps, and email clients with comprehensive examples for popular frameworks.
-
