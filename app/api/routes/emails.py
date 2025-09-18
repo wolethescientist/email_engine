@@ -16,6 +16,7 @@ from ...schemas.email import (
     ModifyEmailRequest,
     PaginatedEmails,
     SendEmailRequest,
+    StarEmailRequest,
 )
 from ...schemas.user import Credentials
 from ...services.email_service import (
@@ -27,6 +28,7 @@ from ...services.email_service import (
     move_email_imap,
     send_email,
     set_read_flag_imap,
+    set_flagged_status_imap,
 )
 
 # Setup logger
@@ -79,7 +81,7 @@ async def _user_from_request(request: Request, creds: Optional[Credentials]):
 async def get_folders(request: Request, body: Optional[ListRequest] = None):
     user = await _user_from_request(request, body.creds if body else None)
     try:
-        folders = list_folders(user)
+        folders = await list_folders(user)
         return {"folders": folders}
     except ValueError as e:
         logger.warning(f"Folder listing failed for {user.email}: {e}")
@@ -101,8 +103,8 @@ async def compose_email(request: Request, body: EmailComposeRequest):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base64 for attachment {a.filename}")
             attachments_data.append((a.filename, a.content_type, content))
 
-        ok = append_draft_imap(
-            user,
+        success = await append_draft_imap(
+            user=user,
             subject=body.subject,
             body=body.body,
             to=[str(x) for x in body.to],
@@ -111,7 +113,7 @@ async def compose_email(request: Request, body: EmailComposeRequest):
             attachments=attachments_data,
         )
 
-        if not ok:
+        if not success:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to save draft to IMAP server")
 
         return DraftResponse(success=True, message="Draft saved to IMAP")
@@ -135,8 +137,7 @@ async def send_mail(request: Request, body: SendEmailRequest):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base64 for attachment {a.filename}")
             attachments_data.append((a.filename, a.content_type, content))
 
-        sent = send_email(
-            db=None,
+        sent = await send_email(
             user=user,
             subject=body.subject,
             body=body.body,
@@ -173,8 +174,11 @@ def _list_handler(folder_key: str):
         try:
             page = body.page if body else int(request.query_params.get("page", 1))
             size = body.size if body else int(request.query_params.get("size", 50))
-            refresh = body.refresh if body else str(request.query_params.get("refresh", "false")).lower() == "true"
-            payload = list_mailbox(user, folder=folder_key, page=page, size=size, refresh=refresh)
+            search_text = body.search_text if body else None
+            is_starred = body.is_starred if body else None
+            read_status = body.read_status if body else None
+            payload = await list_mailbox(user, folder=folder_key, page=page, size=size, 
+                                       search_text=search_text, is_starred=is_starred, read_status=read_status)
             items = [EmailItem(**item) for item in payload.get("items", [])]
             return PaginatedEmails(page=page, size=size, total=payload.get("total", 0), items=items)
         except ValueError as e:
@@ -199,15 +203,39 @@ async def get_email_detail(email_id: int, request: Request, body: Optional[Email
     user = await _user_from_request(request, body.creds if body else None)
     folder = body.folder if body else (request.query_params.get("folder") or "inbox")
     try:
-        detail = get_email_imap(user, folder=folder, uid=email_id)
-        if not detail:
+        logger.info(f"Getting email detail for ID {email_id} in folder {folder}")
+        payload = await get_email_imap(user, folder, email_id)
+        logger.info(f"Email payload received: {payload is not None}")
+        
+        if not payload:
+            logger.warning(f"No email data returned for ID {email_id}")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found")
-        return EmailDetail(**detail)
+        
+        # Map fields to match EmailDetail schema
+        email_detail = {
+            "id": payload.get("uid"),
+            "folder": payload.get("folder", folder),
+            "subject": payload.get("subject"),
+            "body": payload.get("body"),
+            "from_address": payload.get("from"),
+            "to_addresses": payload.get("to", []),
+            "cc_addresses": payload.get("cc", []),
+            "bcc_addresses": payload.get("bcc", []),
+            "is_read": payload.get("is_read", False),
+            "timestamp": payload.get("timestamp"),
+            "has_attachments": payload.get("has_attachments", False),
+            "is_flagged": payload.get("is_flagged", False),
+            "attachments": payload.get("attachments", [])
+        }
+        
+        body = email_detail.get('body') or ''
+        logger.info(f"Mapped email detail: subject={email_detail.get('subject')}, body_length={len(body)}")
+        return EmailDetail(**email_detail)
     except ValueError as e:
-        logger.warning(f"Failed to fetch email {email_id} for {user.email}: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        logger.warning(f"Failed to get email {email_id} from '{folder}' for {user.email}: {e}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error fetching email {email_id} for {user.email}: {e}", exc_info=True)
+        logger.error(f"Unexpected error getting email {email_id} from '{folder}' for {user.email}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while fetching email.")
 
 
@@ -216,7 +244,7 @@ async def delete_email(email_id: int, request: Request, body: Optional[EmailDeta
     user = await _user_from_request(request, body.creds if body else None)
     folder = body.folder if body else (request.query_params.get("folder") or "inbox")
     try:
-        ok = move_email_imap(user, src_folder=folder, uid=email_id, target_folder="trash")
+        ok = await move_email_imap(user, src_folder=folder, uid=email_id, target_folder="trash")
         if not ok:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot be moved")
         return {"status": "ok"}
@@ -233,7 +261,7 @@ async def archive_email(email_id: int, request: Request, body: Optional[EmailDet
     user = await _user_from_request(request, body.creds if body else None)
     folder = body.folder if body else (request.query_params.get("folder") or "inbox")
     try:
-        ok = move_email_imap(user, src_folder=folder, uid=email_id, target_folder="archive")
+        ok = await move_email_imap(user, src_folder=folder, uid=email_id, target_folder="archive")
         if not ok:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot be moved")
         return {"status": "ok"}
@@ -250,7 +278,7 @@ async def unarchive_email(email_id: int, request: Request, body: Optional[EmailD
     user = await _user_from_request(request, body.creds if body else None)
     folder = body.folder if body else (request.query_params.get("folder") or "archive")
     try:
-        ok = move_email_imap(user, src_folder=folder, uid=email_id, target_folder="inbox")
+        ok = await move_email_imap(user, src_folder=folder, uid=email_id, target_folder="inbox")
         if not ok:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot be moved")
         return {"status": "ok"}
@@ -268,7 +296,7 @@ async def mark_read(email_id: int, request: Request, body: ModifyEmailRequest):
     if body.read is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Field 'read' is required")
     try:
-        ok = set_read_flag_imap(user, folder=body.folder, uid=email_id, is_read=body.read)
+        ok = await set_read_flag_imap(user, body.folder, email_id, body.read)
         if not ok:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot update read flag")
         return {"status": "ok"}
@@ -280,12 +308,79 @@ async def mark_read(email_id: int, request: Request, body: ModifyEmailRequest):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while marking email as read.")
 
 
+@router.post("/{email_id}/star")
+async def star_email(email_id: int, request: Request, body: StarEmailRequest):
+    user = await _user_from_request(request, body.creds)
+    try:
+        ok = await set_flagged_status_imap(user, body.folder, email_id, body.starred)
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot update star flag")
+        return {"status": "ok"}
+    except ValueError as e:
+        logger.warning(f"Failed to star email {email_id} for {user.email}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error starring email {email_id} for {user.email}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while starring email.")
+
+
+@router.post("/{email_id}/spam")
+async def spam_email(email_id: int, request: Request, body: Optional[EmailDetailRequest] = None):
+    user = await _user_from_request(request, body.creds if body else None)
+    folder = body.folder if body else (request.query_params.get("folder") or "inbox")
+    try:
+        ok = await move_email_imap(user, src_folder=folder, uid=email_id, target_folder="spam")
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot be moved")
+        return {"status": "ok"}
+    except ValueError as e:
+        logger.warning(f"Failed to spam email {email_id} for {user.email}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error spamming email {email_id} for {user.email}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while spamming email.")
+
+
+@router.post("/{email_id}/unspam")
+async def unspam_email(email_id: int, request: Request, body: Optional[EmailDetailRequest] = None):
+    user = await _user_from_request(request, body.creds if body else None)
+    folder = body.folder if body else (request.query_params.get("folder") or "spam")
+    try:
+        ok = await move_email_imap(user, src_folder=folder, uid=email_id, target_folder="inbox")
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot be moved")
+        return {"status": "ok"}
+    except ValueError as e:
+        logger.warning(f"Failed to unspam email {email_id} for {user.email}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error unspamming email {email_id} for {user.email}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while unspamming email.")
+
+
+@router.post("/{email_id}/restore")
+async def restore_email(email_id: int, request: Request, body: Optional[EmailDetailRequest] = None):
+    user = await _user_from_request(request, body.creds if body else None)
+    folder = body.folder if body else (request.query_params.get("folder") or "trash")
+    try:
+        ok = await move_email_imap(user, src_folder=folder, uid=email_id, target_folder="inbox")
+        if not ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email not found or cannot be moved")
+        return {"status": "ok"}
+    except ValueError as e:
+        logger.warning(f"Failed to restore email {email_id} for {user.email}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error restoring email {email_id} for {user.email}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while restoring email.")
+
+
 @router.post("/{email_id}/attachments/{filename}")
 async def download_attachment(email_id: int, filename: str, request: Request, body: Optional[AttachmentDownloadRequest] = None):
     user = await _user_from_request(request, body.creds if body else None)
     folder = body.folder if body else (request.query_params.get("folder") or "inbox")
     try:
-        result = download_attachment_imap(user, folder=folder, uid=email_id, filename=filename)
+        result = await download_attachment_imap(user, folder, email_id, filename)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
         content, content_type, safe_name = result

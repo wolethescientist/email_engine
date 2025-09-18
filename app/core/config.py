@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
-from pydantic import BaseModel
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
 # Resolve repo root and .env path robustly
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
@@ -8,26 +9,36 @@ try:
     # Prefer pydantic v2 settings if available
     from pydantic_settings import BaseSettings, SettingsConfigDict  # type: ignore
     class Settings(BaseSettings):
-        # Point to absolute .env to avoid CWD issues
-        model_config = SettingsConfigDict(env_file=str(ENV_PATH), env_file_encoding="utf-8", case_sensitive=False)
-        # Security
-        AES_SECRET_KEY: str  # Base64-encoded 32-byte key for AES-GCM
-        JWT_SECRET_KEY: str  # HS256 secret
-        JWT_ALGORITHM: str = "HS256"
-        JWT_EXPIRES_MINUTES: int = 60
-
-        # SMTP/IMAP defaults
-        SMTP_TIMEOUT_SECONDS: int = 15
-        IMAP_TIMEOUT_SECONDS: int = 15
-        SMTP_USE_SSL: bool = True
-        IMAP_USE_SSL: bool = True
-
         # App
         APP_NAME: str = "ConnexxionEngine"
         DEBUG: bool = False
 
+        # Security
+        AES_SECRET_KEY: str = Field(..., description="AES encryption key for secrets")
+        JWT_SECRET_KEY: str = Field(..., description="JWT signing key")
+
+        # SMTP
+        SMTP_USE_SSL: bool = True
+        SMTP_TIMEOUT_SECONDS: int = 30
+
+        # IMAP
+        IMAP_USE_SSL: bool = True
+        IMAP_TIMEOUT_SECONDS: int = 30
+
+        # Connection Pool
+        MAX_CONNECTIONS: int = Field(default=50, description="Maximum connections per pool")
+        MAX_IDLE_TIME: int = Field(default=450, description="Max idle time in seconds")
+        CONNECTION_CLEANUP_INTERVAL: int = Field(default=60, description="Cleanup interval in seconds")
+
+
         # CORS
-        CORS_ORIGINS: list[str] = []
+        CORS_ORIGINS: Optional[List[str]] = Field(default=None, description="Allowed CORS origins")
+
+        model_config = SettingsConfigDict(
+            env_file=str(ENV_PATH),
+            env_file_encoding="utf-8",
+            extra="ignore",
+        )
 
     @lru_cache()
     def get_settings() -> "Settings":

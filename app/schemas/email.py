@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr
 from .user import Credentials
 
@@ -36,6 +37,9 @@ class EmailItem(BaseModel):
     from_address: Optional[str] = None
     to_addresses: List[str] = []
     is_read: bool = False
+    timestamp: Optional[datetime] = None
+    has_attachments: bool = False
+    is_flagged: bool = False
 
 
 class EmailDetail(BaseModel):
@@ -48,6 +52,9 @@ class EmailDetail(BaseModel):
     cc_addresses: List[str] = []
     bcc_addresses: List[str] = []
     is_read: bool = False
+    timestamp: Optional[datetime] = None
+    has_attachments: bool = False
+    is_flagged: bool = False
     attachments: List[str] = []  # list of filenames
 
 
@@ -63,6 +70,9 @@ class ListRequest(BaseModel):
     creds: Credentials
     page: int = Field(1, ge=1)
     size: int = Field(50, ge=1, le=200)
+    search_text: Optional[str] = None
+    is_starred: Optional[bool] = None
+    read_status: Optional[bool] = None
 
 
 class EmailDetailRequest(BaseModel):
@@ -76,3 +86,7 @@ class ModifyEmailRequest(EmailDetailRequest):
 
 class AttachmentDownloadRequest(EmailDetailRequest):
     pass
+
+
+class StarEmailRequest(EmailDetailRequest):
+    starred: bool = Field(..., description="True to star, False to unstar")
