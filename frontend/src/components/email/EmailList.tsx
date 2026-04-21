@@ -74,7 +74,7 @@ export default function EmailList({
       });
       return { previousData };
     },
-    onError: (err, variables, context: any) => {
+    onError: (_err, _variables, context: any) => {
       if (context?.previousData) {
         queryClient.setQueryData(['emails', credentials.email, folder, searchQuery, page], context.previousData);
       }

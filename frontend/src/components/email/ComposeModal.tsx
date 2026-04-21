@@ -220,7 +220,7 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFileSelect(e.dataTransfer.files);
+    handleFileSelect(Array.from(e.dataTransfer.files));
   };
 
   // Quill modules configuration

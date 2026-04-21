@@ -75,7 +75,7 @@ export default function EmailReader({
       queryClient.invalidateQueries({ queryKey: ['emails'] });
       queryClient.invalidateQueries({ queryKey: ['email', emailId, folder] });
     },
-    onError: (error, variables, context: any) => {
+    onError: (error, _variables, context: any) => {
       if (context?.previousEmail) {
         queryClient.setQueryData(['email', emailId, folder], context.previousEmail);
       }
