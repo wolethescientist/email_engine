@@ -1,13 +1,15 @@
-fastapi==0.114.2
+fastapi
 pydantic[email]
-uvicorn[standard]==0.30.6
-pydantic==2.9.2
-pydantic-settings==2.6.1
-cryptography==43.0.1
-imap-tools==1.7.0
-pytest==8.3.2
-httpx==0.27.2
-PyJWT==2.9.0
+uvicorn[standard]
+pydantic
+pydantic-settings
+cryptography
+imap-tools
+pytest
+httpx
+PyJWT
 # Async dependencies
-aioimaplib==1.0.1
-aiosmtplib==3.0.1
+aioimaplib
+aiosmtplib
+opentelemetry-api
+google-genai

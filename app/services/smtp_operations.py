@@ -4,6 +4,8 @@ Handles SMTP-specific operations like sending emails.
 """
 import ssl
 import smtplib
+import logging
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Any
 from ..core.config import get_settings
 from ..core.security import decrypt_secret
@@ -12,6 +14,8 @@ from .folder_manager import resolve_special_folder
 from .email_parser import create_email_message
 from .imap_operations import move_email_imap
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class UserLike(Protocol):
@@ -48,12 +52,31 @@ async def send_email(
     # Send via SMTP using connection pool
     async with get_smtp_client(user) as smtp:
         await smtp.send_message(msg)
+
+    # Save a copy to IMAP Sent so mailbox stays in sync.
+    # Some SMTP providers do this automatically, many do not.
+    try:
+        async with get_imap_client(user) as imap:
+            sent_folder = await resolve_special_folder(user, "sent") or "Sent"
+            raw = msg.as_bytes().replace(b"\n", b"\r\n").replace(b"\r\r\n", b"\r\n")
+            flags = r"(\\Seen)"
+            sent_at = datetime.now(timezone.utc)
+            try:
+                status, _ = await imap.append(raw, sent_folder, flags, sent_at)
+            except (TypeError, ValueError):
+                status, _ = await imap.append(raw, sent_folder, flags, None)
+            if status != "OK":
+                status, _ = await imap.append(raw, sent_folder, None, None)
+            if status != "OK":
+                logger.warning("SMTP send succeeded but failed to append copy to Sent for %s", user.email)
+    except Exception as e:
+        logger.warning("SMTP send succeeded but Sent sync failed for %s: %s", user.email, e)
         
-        # If successful, delete draft if provided
-        if draft_id:
-            await move_email_imap(user, "drafts", draft_id, "trash")
-        
-        return {"status": "sent", "message_id": msg.get("Message-ID")}
+    # If successful, delete draft if provided
+    if draft_id:
+        await move_email_imap(user, "drafts", draft_id, "trash")
+    
+    return {"status": "sent", "message_id": msg.get("Message-ID")}
 
 
 def _make_smtp(user: UserLike):

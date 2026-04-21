@@ -3,8 +3,7 @@ IMAP operations module for email service.
 Handles IMAP-specific operations like reading, moving, flagging emails.
 """
 import imaplib
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Any, Dict
 from email.parser import BytesParser
 from email import policy
@@ -319,27 +318,14 @@ async def get_email_imap(user: UserLike, folder: str, uid: int):
             logger.error(f"Failed to select folder {effective_folder} for email detail")
             return None
             
-        # First verify the UID exists in this folder using regular SEARCH
-        logger.info(f"Verifying UID {uid} exists in folder {effective_folder}")
-        status, search_data = await imap.search(f"UID {uid}")
-        logger.info(f"SEARCH UID status: {status}, data: {search_data}")
-        
-        if status != "OK" or not search_data or not search_data[0]:
-            logger.warning(f"UID {uid} not found in folder {effective_folder}")
-            return None
-        
-        # SEARCH returns sequence numbers, not UIDs, so we need to convert
-        # If search found results, the UID exists
-        seq_numbers = search_data[0].decode().split() if search_data[0] else []
-        if not seq_numbers:
-            logger.warning(f"UID {uid} not found in search results")
-            return None
-        
-        logger.info(f"UID {uid} confirmed to exist, fetching email detail from folder {effective_folder}")
-        status, msg_data = await imap.uid("FETCH", str(uid), "(BODY.PEEK[] FLAGS)")
+        # Fetch email detail directly
+        logger.info(f"Fetching email detail from folder {effective_folder} for UID {uid}")
+        # Fetch up to 1MB (1048576 bytes) to prevent giant memory hangs for very large attachments,
+        # since we only need headers and body content. Real attachments are fetched individually.
+        status, msg_data = await imap.uid("FETCH", str(uid), "(BODY.PEEK[]<0.1048576> FLAGS)")
         logger.info(f"UID FETCH status: {status}, data length: {len(msg_data) if msg_data else 0}")
         
-        if status != "OK" or not msg_data:
+        if status != "OK" or not msg_data or (len(msg_data) == 1 and msg_data[0] is None):
             logger.warning(f"UID FETCH failed for UID {uid} - status: {status}, has_data: {msg_data is not None}")
             return None
 
@@ -385,9 +371,9 @@ async def get_email_imap(user: UserLike, folder: str, uid: int):
                         except Exception:
                             pass
                     
-                    # Look for the size indicator in BODY[] {size}
+                    # Look for the size indicator in BODY[] {size} or BODY[]<0> {size}
                     import re
-                    size_match = re.search(r'BODY\[\]\s*\{(\d+)\}', item_str)
+                    size_match = re.search(r'BODY\[\](?:<\d+>)?\s*\{(\d+)\}', item_str)
                     if size_match:
                         expected_size = int(size_match.group(1))
                         logger.info(f"Expected email size: {expected_size} bytes")
@@ -712,9 +698,38 @@ async def download_attachment_imap(user: UserLike, folder: str, uid: int, filena
         if status != "OK" or not msg_data:
             return None
         raw_bytes = b""
+
+        # Handle tuple-style responses first: (metadata, payload_bytes)
         for part in msg_data:
-            if isinstance(part, tuple):
-                raw_bytes += part[1]
+            if isinstance(part, tuple) and len(part) >= 2 and isinstance(part[1], (bytes, bytearray)):
+                raw_bytes += bytes(part[1])
+
+        # Handle bytes/bytearray-style responses (common with aioimaplib)
+        if not raw_bytes:
+            expected_size = None
+            payload_chunks: list[bytes] = []
+
+            for i, part in enumerate(msg_data):
+                if isinstance(part, bytes):
+                    part_str = part.decode(errors="ignore")
+                    if "FETCH" in part_str and "BODY[]" in part_str:
+                        import re
+                        size_match = re.search(r'BODY\[\](?:<\d+>)?\s*\{(\d+)\}', part_str)
+                        if size_match:
+                            expected_size = int(size_match.group(1))
+                            for next_part in msg_data[i + 1:]:
+                                if isinstance(next_part, (bytes, bytearray)):
+                                    payload_chunks.append(bytes(next_part))
+                                else:
+                                    break
+                            break
+
+            if payload_chunks:
+                combined_payload = b"".join(payload_chunks)
+                raw_bytes = combined_payload[:expected_size] if expected_size else combined_payload
+
+        if not raw_bytes:
+            return None
         msg = BytesParser(policy=policy.default).parsebytes(raw_bytes)
         return find_attachment_in_message(msg, filename)
 
@@ -746,10 +761,14 @@ async def append_draft_imap(
         drafts_folder = await resolve_special_folder(user, "drafts") or "Drafts"
         raw = msg.as_bytes().replace(b"\n", b"\r\n").replace(b"\r\r\n", b"\r\n")
         flags = r"(\\Draft)"
-        timestamp = imaplib.Time2Internaldate(time.time())
-        status, _ = await imap.append(drafts_folder, flags, timestamp, raw)
+        # aioimaplib append expects datetime/None here, not IMAP internaldate string.
+        timestamp = datetime.now(timezone.utc)
+        try:
+            status, _ = await imap.append(raw, drafts_folder, flags, timestamp)
+        except (TypeError, ValueError):
+            status, _ = await imap.append(raw, drafts_folder, flags, None)
         if status != "OK":
-            status, _ = await imap.append(drafts_folder, None, None, raw)
+            status, _ = await imap.append(raw, drafts_folder, None, None)
         return status == "OK"
 
 

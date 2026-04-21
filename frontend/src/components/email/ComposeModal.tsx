@@ -13,10 +13,11 @@ import {
   Minimize2,
   Maximize2,
   Save,
+  Sparkles,
   Loader2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { Credentials, SendEmailRequest, AttachmentIn } from '@/types';
+import { Credentials, SendEmailRequest, AttachmentIn, ComposePrefill } from '@/types';
 import { EmailApiService, handleApiError } from '@/services/emailApi';
 import { parseEmailList, formatFileSize, cn } from '@/utils';
 
@@ -33,11 +34,7 @@ type ComposeFormData = z.infer<typeof composeSchema>;
 interface ComposeModalProps {
   credentials: Credentials;
   onClose: () => void;
-  replyTo?: {
-    subject: string;
-    to: string[];
-    body: string;
-  };
+  replyTo?: ComposePrefill;
 }
 
 export default function ComposeModal({ credentials, onClose, replyTo }: ComposeModalProps) {
@@ -46,8 +43,22 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
   const [showBcc, setShowBcc] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentIn[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  const getModeTitle = () => {
+    switch (replyTo?.mode) {
+      case 'reply':
+        return 'Reply';
+      case 'replyAll':
+        return 'Reply All';
+      case 'forward':
+        return 'Forward';
+      default:
+        return 'New Message';
+    }
+  };
 
   const {
     register,
@@ -58,9 +69,10 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
   } = useForm<ComposeFormData>({
     resolver: zodResolver(composeSchema),
     defaultValues: {
-      to: replyTo?.to.join(', ') || '',
-      subject: replyTo?.subject ? `Re: ${replyTo.subject}` : '',
-      body: replyTo?.body ? `\n\n--- Original Message ---\n${replyTo.body}` : '',
+      to: replyTo?.to?.join(', ') || '',
+      cc: replyTo?.cc?.join(', ') || '',
+      subject: replyTo?.subject || '',
+      body: replyTo?.body || '',
     }
   });
 
@@ -82,7 +94,9 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
     mutationFn: (emailData: SendEmailRequest) => EmailApiService.sendEmail(emailData),
     onSuccess: () => {
       toast.success('Email sent successfully!');
+      queryClient.removeQueries({ queryKey: ['emails', credentials.email, 'sent'] });
       queryClient.invalidateQueries({ queryKey: ['emails'] });
+      queryClient.refetchQueries({ queryKey: ['emails', credentials.email, 'sent'], type: 'active' });
       onClose();
     },
     onError: (error) => {
@@ -96,6 +110,23 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
     onSuccess: () => {
       toast.success('Draft saved');
       queryClient.invalidateQueries({ queryKey: ['emails', credentials.email, 'drafts'] });
+    },
+    onError: (error) => {
+      toast.error(handleApiError(error));
+    },
+  });
+
+  const aiDraftMutation = useMutation({
+    mutationFn: () =>
+      EmailApiService.generateAIDraft({
+        prompt: aiPrompt,
+        to: parseEmailList(watch('to') || ''),
+        cc: parseEmailList(watch('cc') || ''),
+        subject: watch('subject') || '',
+      }),
+    onSuccess: (result) => {
+      setValue('body', result.content, { shouldDirty: true });
+      toast.success('AI draft generated');
     },
     onError: (error) => {
       toast.error(handleApiError(error));
@@ -133,30 +164,43 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
     sendMutation.mutate(emailData);
   };
 
-  const handleFileSelect = (files: FileList | null) => {
-    if (!files) return;
+  const toBase64 = async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  };
 
-    Array.from(files).forEach(file => {
+  const handleFileSelect = async (files: File[]) => {
+    if (!files.length) return;
+
+    for (const file of files) {
       if (file.size > 25 * 1024 * 1024) { // 25MB limit
         toast.error(`File ${file.name} is too large. Maximum size is 25MB.`);
-        return;
+        continue;
       }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const base64 = e.target?.result as string;
-        const content = base64.split(',')[1]; // Remove data:type;base64, prefix
+      try {
+        const content = await toBase64(file);
+        const hasMimeType = file.type && file.type.includes('/');
 
         const attachment: AttachmentIn = {
           filename: file.name,
           content_base64: content,
-          content_type: file.type,
+          content_type: hasMimeType ? file.type : undefined,
         };
 
         setAttachments(prev => [...prev, attachment]);
-      };
-      reader.readAsDataURL(file);
-    });
+        toast.success(`Attached ${file.name}`);
+      } catch {
+        toast.error(`Failed to read ${file.name}. Please try a different file.`);
+      }
+    }
   };
 
   const removeAttachment = (index: number) => {
@@ -204,13 +248,14 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
           animate={{ 
             opacity: 1, 
             scale: 1, 
-            y: 0,
-            height: isMinimized ? 60 : 600,
-            width: isMinimized ? 300 : 700
+            y: 0
           }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           className={cn(
-            "bg-card border border-border rounded-lg shadow-2xl flex flex-col overflow-hidden",
+            "glass-strong rounded-2xl shadow-2xl flex flex-col overflow-hidden",
+            isMinimized
+              ? "h-[60px] w-[300px]"
+              : "h-[min(600px,calc(100vh-2rem))] w-[min(700px,calc(100vw-2rem))] max-w-[700px]",
             isDragging && "ring-2 ring-primary"
           )}
           onDragOver={handleDragOver}
@@ -218,10 +263,10 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
           onDrop={handleDrop}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+          <div className="flex items-center justify-between p-4 border-b border-border/50 glass-subtle">
             <div className="flex items-center gap-2">
               <h3 className="font-semibold">
-                {replyTo ? 'Reply' : 'New Message'}
+                {getModeTitle()}
               </h3>
               {draftMutation.isPending && (
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -248,15 +293,15 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
           </div>
 
           {!isMinimized && (
-            <form onSubmit={handleSubmit(onSubmit)} className="flex-1 flex flex-col">
+            <form onSubmit={handleSubmit(onSubmit)} className="flex-1 min-h-0 flex flex-col">
               {/* Recipients */}
-              <div className="p-4 space-y-3 border-b border-border">
+              <div className="p-4 space-y-3 border-b border-border flex-shrink-0">
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-medium w-12">To:</label>
                   <input
                     {...register('to')}
                     placeholder="Recipients (separate with commas)"
-                    className="flex-1 px-3 py-1 border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                    className="flex-1 input-base"
                   />
                   <div className="flex gap-1">
                     {!showCc && (
@@ -289,7 +334,7 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                     <input
                       {...register('cc')}
                       placeholder="Carbon copy recipients"
-                      className="flex-1 px-3 py-1 border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      className="flex-1 input-base"
                     />
                   </div>
                 )}
@@ -300,7 +345,7 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                     <input
                       {...register('bcc')}
                       placeholder="Blind carbon copy recipients"
-                      className="flex-1 px-3 py-1 border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      className="flex-1 input-base"
                     />
                   </div>
                 )}
@@ -310,14 +355,14 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                   <input
                     {...register('subject')}
                     placeholder="Email subject"
-                    className="flex-1 px-3 py-1 border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                    className="flex-1 input-base"
                   />
                 </div>
               </div>
 
               {/* Attachments */}
               {attachments.length > 0 && (
-                <div className="p-4 border-b border-border">
+                <div className="p-4 border-b border-border flex-shrink-0">
                   <div className="flex items-center gap-2 mb-3">
                     <Paperclip className="w-4 h-4" />
                     <span className="text-sm font-medium">
@@ -325,7 +370,7 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                     </span>
                   </div>
                   
-                  <div className="space-y-2">
+                  <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
                     {attachments.map((attachment, index) => (
                       <div key={index} className="flex items-center gap-3 p-2 bg-muted/50 rounded">
                         <Paperclip className="w-4 h-4 text-muted-foreground" />
@@ -349,18 +394,45 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
               )}
 
               {/* Body */}
-              <div className="flex-1 min-h-0">
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="border-b border-border/60 p-3 flex items-center gap-2 bg-muted/20">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  <input
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder="Ask AI to draft (e.g. reply politely and ask for timeline)"
+                    className="flex-1 input-base h-9"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => aiDraftMutation.mutate()}
+                    disabled={aiDraftMutation.isPending || !aiPrompt.trim()}
+                    className="btn-ghost h-9"
+                  >
+                    {aiDraftMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Generating
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        Generate Draft
+                      </>
+                    )}
+                  </button>
+                </div>
                 <ReactQuill
                   value={watchedBody}
                   onChange={(content) => setValue('body', content, { shouldDirty: true })}
                   modules={quillModules}
                   placeholder="Write your message..."
-                  className="h-full [&_.ql-container]:border-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border"
+                  className="compose-quill h-full flex flex-col [&_.ql-toolbar]:shrink-0 [&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-border [&_.ql-container]:flex-1 [&_.ql-container]:min-h-0 [&_.ql-container]:border-0 [&_.ql-container]:overflow-hidden [&_.ql-editor]:h-full [&_.ql-editor]:min-h-0 [&_.ql-editor]:overflow-y-auto"
                 />
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between p-4 border-t border-border bg-muted/30">
+              <div className="flex items-center justify-between p-4 border-t border-border/50 glass-subtle flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -375,7 +447,14 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                     type="file"
                     multiple
                     className="hidden"
-                    onChange={(e) => handleFileSelect(e.target.files)}
+                    onChange={(e) => {
+                      const selectedFiles = e.currentTarget.files
+                        ? Array.from(e.currentTarget.files)
+                        : [];
+                      handleFileSelect(selectedFiles);
+                      // Allow selecting the same file again after remove/failure.
+                      e.currentTarget.value = '';
+                    }}
                   />
                 </div>
 
@@ -384,7 +463,7 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                     type="button"
                     onClick={saveDraft}
                     disabled={draftMutation.isPending}
-                    className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
+                    className="btn-ghost"
                   >
                     <Save className="w-3 h-3" />
                     Save Draft
@@ -393,7 +472,7 @@ export default function ComposeModal({ credentials, onClose, replyTo }: ComposeM
                   <button
                     type="submit"
                     disabled={sendMutation.isPending}
-                    className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-2 font-medium"
+                    className="btn-primary px-6"
                   >
                     {sendMutation.isPending ? (
                       <>

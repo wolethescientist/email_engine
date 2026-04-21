@@ -77,10 +77,10 @@ export default function Sidebar({
     <motion.div
       initial={{ width: 280 }}
       animate={{ width: isCollapsed ? 80 : 280 }}
-      className="bg-card border-r border-border flex flex-col h-full"
+      className="glass-subtle flex flex-col h-full rounded-r-3xl m-2 border border-border shadow-md"
     >
       {/* Header */}
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border/50">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center flex-shrink-0">
             <Mail className="w-4 h-4 text-primary-foreground" />
@@ -92,7 +92,7 @@ export default function Sidebar({
               exit={{ opacity: 0 }}
               className="flex-1 min-w-0"
             >
-              <h1 className="font-semibold text-sm truncate">ConnexxionEngine</h1>
+              <h1 className="font-bold text-base truncate brand-gradient-text tracking-wide">wolemail</h1>
               <p className="text-xs text-muted-foreground truncate">{userEmail}</p>
             </motion.div>
           )}
@@ -106,7 +106,7 @@ export default function Sidebar({
           whileTap={{ scale: 0.98 }}
           onClick={onCompose}
           className={cn(
-            "w-full bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2",
+            "w-full btn-primary",
             isCollapsed ? "p-3" : "py-3 px-4"
           )}
         >
@@ -140,10 +140,10 @@ export default function Sidebar({
                   whileHover={{ x: 2 }}
                   onClick={() => handleFolderClick(folderType)}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left",
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all duration-200 text-left font-medium",
                     isActive 
-                      ? "bg-primary/10 text-primary font-medium" 
-                      : "hover:bg-muted/50 text-muted-foreground hover:text-foreground"
+                      ? "glass-strong text-primary shadow-sm" 
+                      : "hover:bg-muted/50 text-muted-foreground hover:text-foreground hover:translate-x-1"
                   )}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0" />
@@ -198,8 +198,7 @@ export default function Sidebar({
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="absolute bottom-full left-0 right-0 mb-2 bg-card border border-border rounded-lg shadow-lg overflow-hidden"
+              className="absolute bottom-full left-0 right-0 mb-4 glass-strong rounded-2xl mx-2 shadow-xl overflow-hidden"
             >
               <button className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted/50 transition-colors">
                 <Settings className="w-4 h-4" />

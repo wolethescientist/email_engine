@@ -94,6 +94,26 @@ export interface DraftResponse {
   message?: string;
 }
 
+export type AIReplyStyle = 'short' | 'medium' | 'formal';
+
+export interface AIDraftRequest {
+  prompt: string;
+  to?: string[];
+  cc?: string[];
+  subject?: string;
+}
+
+export interface AIReplySuggestionRequest {
+  style: AIReplyStyle;
+  subject?: string;
+  from_address?: string;
+  body?: string;
+}
+
+export interface AIGenerationResponse {
+  content: string;
+}
+
 export interface ErrorResponse {
   detail: string;
 }
@@ -121,6 +141,16 @@ export interface EmailProvider {
 
 export interface Theme {
   mode: 'light' | 'dark';
+}
+
+export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
+
+export interface ComposePrefill {
+  mode: ComposeMode;
+  to?: string[];
+  cc?: string[];
+  subject?: string;
+  body?: string;
 }
 
 // Folder types

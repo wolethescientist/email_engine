@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr
 from .user import Credentials
@@ -90,3 +90,21 @@ class AttachmentDownloadRequest(EmailDetailRequest):
 
 class StarEmailRequest(EmailDetailRequest):
     starred: bool = Field(..., description="True to star, False to unstar")
+
+
+class AIDraftRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    to: List[str] = []
+    cc: List[str] = []
+    subject: Optional[str] = None
+
+
+class AIReplySuggestionRequest(BaseModel):
+    style: Literal["short", "medium", "formal"]
+    subject: Optional[str] = None
+    from_address: Optional[str] = None
+    body: Optional[str] = None
+
+
+class AIGenerationResponse(BaseModel):
+    content: str

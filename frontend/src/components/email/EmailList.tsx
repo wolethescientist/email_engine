@@ -1,5 +1,5 @@
-import { useState} from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion} from 'framer-motion';
 import { 
   Star, 
@@ -10,9 +10,10 @@ import {
   Mail,
   MailOpen
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import Checkbox from '@/components/ui/Checkbox';
 import { Credentials, EmailItem, FolderType } from '@/types';
-import { EmailApiService } from '@/services/emailApi';
+import { EmailApiService, handleApiError } from '@/services/emailApi';
 import { formatEmailDate, generateAvatarUrl, cn } from '@/utils';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -34,15 +35,83 @@ export default function EmailList({
 }: EmailListProps) {
   const [selectedEmails, setSelectedEmails] = useState<Set<number>>(new Set());
   const [currentEmailIndex, setCurrentEmailIndex] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    setPage(1);
+    setSelectedEmails(new Set());
+  }, [folder, searchQuery]);
 
   // Fetch emails
   const { data: emailsData, isLoading, error } = useQuery({
-    queryKey: ['emails', credentials.email, folder, searchQuery],
+    queryKey: ['emails', credentials.email, folder, searchQuery, page],
     queryFn: () => EmailApiService.getEmails(credentials, folder, {
       search_text: searchQuery || undefined,
-      size: 100, // Load more emails for better UX
+      size: pageSize,
+      page: page,
     }),
     staleTime: 2 * 60 * 1000, // 2 minutes
+  });
+
+  const starMutation = useMutation({
+    mutationFn: ({ emailId, starred }: { emailId: number; starred: boolean }) => 
+      EmailApiService.starEmail(credentials, emailId, folder, starred),
+    onMutate: async ({ emailId, starred }) => {
+      await queryClient.cancelQueries({ queryKey: ['emails', credentials.email, folder, searchQuery, page] });
+      const previousData = queryClient.getQueryData(['emails', credentials.email, folder, searchQuery, page]);
+      
+      queryClient.setQueryData(['emails', credentials.email, folder, searchQuery, page], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          items: old.items.map((item: any) => 
+            item.id === emailId ? { ...item, is_flagged: starred } : item
+          )
+        };
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context: any) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['emails', credentials.email, folder, searchQuery, page], context.previousData);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['emails', credentials.email, folder, searchQuery, page] });
+      queryClient.invalidateQueries({ queryKey: ['emails'] }); // Invalidate all email queries to reflect stare state change everywhere.
+    }
+  });
+
+  const handleStarClick = (e: React.MouseEvent, email: EmailItem) => {
+    e.stopPropagation();
+    starMutation.mutate({ emailId: email.id, starred: !email.is_flagged });
+  };
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: () => EmailApiService.bulkDelete(credentials, Array.from(selectedEmails), folder),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['emails'] });
+      toast.success(`${selectedEmails.size} emails moved to trash`);
+      setSelectedEmails(new Set());
+    },
+    onError: (err) => {
+      toast.error(handleApiError(err));
+    }
+  });
+
+  const bulkArchiveMutation = useMutation({
+    mutationFn: () => EmailApiService.bulkArchive(credentials, Array.from(selectedEmails), folder),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['emails'] });
+      toast.success(`${selectedEmails.size} emails archived`);
+      setSelectedEmails(new Set());
+    },
+    onError: (err) => {
+      toast.error(handleApiError(err));
+    }
   });
 
   // Sort emails by timestamp (newest first) to ensure proper ordering
@@ -142,12 +211,12 @@ export default function EmailList({
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Toolbar */}
-      <div className="border-b border-border p-3 bg-card/50 flex-shrink-0">
+      <div className="glass-subtle border-b border-border/50 p-3 flex-shrink-0 z-10 sticky top-0">
         <div className="flex items-center gap-3">
           <Checkbox
             checked={selectedEmails.size === emails.length && emails.length > 0}
             onCheckedChange={selectAllEmails}
-            className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+            className="data-[state=checked]:bg-accent-cta data-[state=checked]:border-accent-cta rounded-lg transition-colors"
           />
           
           <span className="text-sm text-muted-foreground">
@@ -159,10 +228,20 @@ export default function EmailList({
 
           {selectedEmails.size > 0 && (
             <div className="flex items-center gap-2 ml-auto">
-              <button className="p-2 hover:bg-muted rounded-lg transition-colors">
+              <button 
+                onClick={() => bulkArchiveMutation.mutate()}
+                disabled={bulkArchiveMutation.isPending}
+                className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-50"
+                title="Archive selected"
+              >
                 <Archive className="w-4 h-4" />
               </button>
-              <button className="p-2 hover:bg-muted rounded-lg transition-colors">
+              <button 
+                onClick={() => bulkDeleteMutation.mutate()}
+                disabled={bulkDeleteMutation.isPending}
+                className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-50 text-destructive"
+                title="Delete selected"
+              >
                 <Trash2 className="w-4 h-4" />
               </button>
               <button className="p-2 hover:bg-muted rounded-lg transition-colors">
@@ -174,8 +253,8 @@ export default function EmailList({
       </div>
 
       {/* Email List */}
-      <div className="flex-1 overflow-auto">
-        <div className="space-y-0">
+      <div className="flex-1 overflow-auto flex flex-col min-h-0">
+        <div className="space-y-0 flex-1">
           {emails.map((email, index) => {
             const isSelected = selectedEmails.has(email.id);
             const isActive = email.id === selectedEmailId;
@@ -191,9 +270,9 @@ export default function EmailList({
                 <div
                   onClick={() => handleEmailClick(email, index)}
                   className={cn(
-                    "flex items-center gap-3 p-3 border-b border-border cursor-pointer transition-colors hover:bg-muted/50",
-                    isActive && "bg-primary/5 border-primary/20",
-                    !email.is_read && "bg-muted/20"
+                    "flex items-center gap-3 p-3 border-b border-border/50 cursor-pointer transition-all hover:bg-primary/5",
+                    isActive && "glass-strong border-primary/20 shadow-sm rounded-lg my-1",
+                    !email.is_read && "bg-muted/30"
                   )}
                 >
                   {/* Checkbox */}
@@ -201,15 +280,12 @@ export default function EmailList({
                     checked={isSelected}
                     onCheckedChange={() => toggleEmailSelection(email.id)}
                     onClick={(e) => e.stopPropagation()}
-                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                    className="data-[state=checked]:bg-accent-cta data-[state=checked]:border-accent-cta rounded-lg transition-colors"
                   />
 
                   {/* Star */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // TODO: Implement star functionality
-                    }}
+                    onClick={(e) => handleStarClick(e, email)}
                     className="p-1 hover:bg-muted rounded transition-colors"
                   >
                     <Star 
@@ -223,7 +299,7 @@ export default function EmailList({
                   </button>
 
                   {/* Avatar */}
-                  <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-muted flex items-center justify-center">
                     <img
                       src={generateAvatarUrl(email.from_address || '')}
                       alt=""
@@ -270,6 +346,31 @@ export default function EmailList({
             );
           })}
         </div>
+
+        {/* Pagination Controls */}
+        {emailsData && emailsData.total > 0 && (
+          <div className="glass-subtle border-t border-border/50 p-3 flex items-center justify-between flex-shrink-0 sticky bottom-0 z-10">
+            <div className="text-sm text-muted-foreground">
+              Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, emailsData.total)} of {emailsData.total}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1 || isLoading}
+                className="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setPage(p => p + 1)}
+                disabled={page * pageSize >= emailsData.total || isLoading}
+                className="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

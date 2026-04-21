@@ -1,6 +1,6 @@
-# ConnexxionEngine Frontend
+# wolemail Frontend
 
-A modern, secure React TypeScript email client built for the ConnexxionEngine API. Features enterprise-grade security, real-time synchronization, and a beautiful user interface.
+A modern, secure React TypeScript email client built for the wolemail API. Features enterprise-grade security, real-time synchronization, and a beautiful user interface.
 
 ## Features
 
@@ -50,7 +50,7 @@ A modern, secure React TypeScript email client built for the ConnexxionEngine AP
 ### Prerequisites
 
 - Node.js 18+ and npm/yarn
-- ConnexxionEngine backend running on `http://localhost:8000`
+- wolemail backend running on `http://localhost:8000`
 
 ### Installation
 
@@ -156,7 +156,7 @@ const EMAIL_PROVIDERS = {
 
 ## API Integration
 
-The frontend integrates with the ConnexxionEngine backend through a comprehensive API service layer:
+The frontend integrates with the wolemail backend through a comprehensive API service layer:
 
 ```typescript
 // Example API usage
@@ -312,7 +312,7 @@ CMD ["npm", "run", "preview"]
 
 ## License
 
-This project is part of the ConnexxionEngine email management system.
+This project is part of the wolemail email management system.
 
 ---
 

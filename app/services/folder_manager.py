@@ -19,6 +19,9 @@ class UserLike(Protocol):
     imap_port: int
 
 
+_FOLDER_CACHE: dict[str, dict[str, str]] = {}
+
+
 # Attribute mapping for folder classification (RFC 6154 / XLIST)
 _ATTR_MAP = {
     r"\inbox": "inbox",
@@ -95,9 +98,7 @@ def _classify_folder(name: str, attrs: set[str], delim: str) -> str:
     elif n.startswith("inbox/"):
         folder_basename = n[6:]  # Remove "inbox/" prefix
     
-    if "inbox" in n:
-        return "inbox"
-    elif any(x in folder_basename for x in ["sent", "sent items", "sent messages", "sent mail"]):
+    if any(x in folder_basename for x in ["sent", "sent items", "sent messages", "sent mail"]):
         return "sent"
     elif "draft" in folder_basename:
         return "drafts"
@@ -107,6 +108,8 @@ def _classify_folder(name: str, attrs: set[str], delim: str) -> str:
         return "spam"
     elif any(x in folder_basename for x in ["archive", "all mail"]):
         return "archive"
+    elif n in {"inbox", "inbox/"} or folder_basename == "inbox":
+        return "inbox"
     return "custom"
 
 
@@ -178,47 +181,80 @@ async def resolve_special_folder(user: UserLike, key: str) -> str | None:
     """Resolve a standardized key (inbox/sent/drafts/spam/trash/archive/junk) to the provider's actual folder path.
     Falls back to best heuristics if not found explicitly.
     """
+    global _FOLDER_CACHE
+    if user.email not in _FOLDER_CACHE:
+        _FOLDER_CACHE[user.email] = {}
+        
+    if key in _FOLDER_CACHE[user.email]:
+        return _FOLDER_CACHE[user.email][key]
+        
     folders = await _collect_provider_folders(user)
+    
+    resolved_path = None
     # First pass: exact type match
     for folder in folders:
         if folder["type"] == key:
-            return folder["name"]
+            resolved_path = folder["name"]
+            break
+            
     # Second pass: heuristics for common names
-    if key == "inbox":
-        for folder in folders:
-            if folder["name"].upper() == "INBOX":
-                return folder["name"]
-    elif key == "sent":
-        candidates = ["Sent", "Sent Items", "Sent Messages", "Sent Mail", "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.sent", "INBOX/Sent"]
-        for cand in candidates:
+    if not resolved_path:
+        if key == "inbox":
             for folder in folders:
-                if folder["name"] == cand:
-                    return folder["name"]
-    elif key == "drafts":
-        candidates = ["Drafts", "[Gmail]/Drafts", "INBOX.Drafts", "INBOX.drafts", "INBOX/Drafts"]
-        for cand in candidates:
-            for folder in folders:
-                if folder["name"] == cand:
-                    return folder["name"]
-    elif key == "trash":
-        candidates = ["Trash", "[Gmail]/Trash", "Deleted Items", "Deleted Messages", "Bin", "INBOX.Trash", "INBOX.trash", "INBOX/Trash"]
-        for cand in candidates:
-            for folder in folders:
-                if folder["name"] == cand:
-                    return folder["name"]
-    elif key == "spam" or key == "junk":
-        candidates = ["Spam", "[Gmail]/Spam", "Junk", "Junk Email", "Junk E-mail", "Bulk", "Bulk Mail", "INBOX.Spam", "INBOX.spam", "INBOX/Spam"]
-        for cand in candidates:
-            for folder in folders:
-                if folder["name"] == cand:
-                    return folder["name"]
-    elif key == "archive":
-        candidates = ["Archive", "[Gmail]/All Mail", "All Mail", "[Gmail]/Archive", "INBOX.Archive", "INBOX.archive", "INBOX/Archive"]
-        for cand in candidates:
-            for folder in folders:
-                if folder["name"] == cand:
-                    return folder["name"]
-    return None
+                if folder["name"].upper() == "INBOX":
+                    resolved_path = folder["name"]
+                    break
+        elif key == "sent":
+            candidates = ["Sent", "Sent Items", "Sent Messages", "Sent Mail", "[Gmail]/Sent Mail", "INBOX.Sent", "INBOX.sent", "INBOX/Sent"]
+            for cand in candidates:
+                for folder in folders:
+                    if folder["name"] == cand:
+                        resolved_path = folder["name"]
+                        break
+                if resolved_path: break
+            if not resolved_path:
+                for folder in folders:
+                    fname = folder["name"].lower()
+                    if "sent" in fname and "consent" not in fname:
+                        resolved_path = folder["name"]
+                        break
+        elif key == "drafts":
+            candidates = ["Drafts", "[Gmail]/Drafts", "INBOX.Drafts", "INBOX.drafts", "INBOX/Drafts"]
+            for cand in candidates:
+                for folder in folders:
+                    if folder["name"] == cand:
+                        resolved_path = folder["name"]
+                        break
+                if resolved_path: break
+        elif key == "trash":
+            candidates = ["Trash", "[Gmail]/Trash", "Deleted Items", "Deleted Messages", "Bin", "INBOX.Trash", "INBOX.trash", "INBOX/Trash"]
+            for cand in candidates:
+                for folder in folders:
+                    if folder["name"] == cand:
+                        resolved_path = folder["name"]
+                        break
+                if resolved_path: break
+        elif key == "spam" or key == "junk":
+            candidates = ["Spam", "[Gmail]/Spam", "Junk", "Junk Email", "Junk E-mail", "Bulk", "Bulk Mail", "INBOX.Spam", "INBOX.spam", "INBOX/Spam"]
+            for cand in candidates:
+                for folder in folders:
+                    if folder["name"] == cand:
+                        resolved_path = folder["name"]
+                        break
+                if resolved_path: break
+        elif key == "archive":
+            candidates = ["Archive", "[Gmail]/All Mail", "All Mail", "[Gmail]/Archive", "INBOX.Archive", "INBOX.archive", "INBOX/Archive"]
+            for cand in candidates:
+                for folder in folders:
+                    if folder["name"] == cand:
+                        resolved_path = folder["name"]
+                        break
+                if resolved_path: break
+
+    if resolved_path:
+        _FOLDER_CACHE[user.email][key] = resolved_path
+    
+    return resolved_path
 
 
 def resolve_special_folder_sync(user: UserLike, key: str) -> str | None:

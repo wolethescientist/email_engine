@@ -27,16 +27,20 @@ try:
 
         # Connection Pool
         MAX_CONNECTIONS: int = Field(default=50, description="Maximum connections per pool")
-        MAX_IDLE_TIME: int = Field(default=450, description="Max idle time in seconds")
-        CONNECTION_CLEANUP_INTERVAL: int = Field(default=60, description="Cleanup interval in seconds")
+        MAX_IDLE_TIME: int = Field(default=180, description="Max idle time in seconds before eviction")
+        CONNECTION_CLEANUP_INTERVAL: int = Field(default=30, description="Keepalive/cleanup interval in seconds")
 
+        # AI
+        GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini API key")
+        GEMINI_MODEL: str = Field(default="gemini-3-flash-preview", description="Gemini model name")
 
-        # CORS
+        # CORS  
         CORS_ORIGINS: Optional[List[str]] = Field(default=None, description="Allowed CORS origins")
 
         model_config = SettingsConfigDict(
             env_file=str(ENV_PATH),
             env_file_encoding="utf-8",
+            env_ignore_empty=True,
             extra="ignore",
         )
 
@@ -61,6 +65,8 @@ except Exception:
         IMAP_TIMEOUT_SECONDS: int = int(os.getenv("IMAP_TIMEOUT_SECONDS", "15"))
         SMTP_USE_SSL: bool = os.getenv("SMTP_USE_SSL", "true").lower() == "true"
         IMAP_USE_SSL: bool = os.getenv("IMAP_USE_SSL", "true").lower() == "true"
+        GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+        GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
         APP_NAME: str = os.getenv("APP_NAME", "ConnexxionEngine")
         DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
         # Comma-separated list of origins, e.g. http://localhost:5173,http://localhost:3000

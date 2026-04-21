@@ -1,6 +1,9 @@
 import axios, { AxiosResponse } from 'axios';
 import { config } from '@/config';
 import {
+  AIDraftRequest,
+  AIGenerationResponse,
+  AIReplySuggestionRequest,
   Credentials,
   ConnectResponse,
   FoldersResponse,
@@ -97,6 +100,16 @@ export class EmailApiService {
   // Compose/save draft
   static async saveDraft(emailData: EmailComposeRequest): Promise<DraftResponse> {
     const response: AxiosResponse<DraftResponse> = await api.post('/emails/compose', emailData);
+    return response.data;
+  }
+
+  static async generateAIDraft(request: AIDraftRequest): Promise<AIGenerationResponse> {
+    const response: AxiosResponse<AIGenerationResponse> = await api.post('/emails/ai/draft', request);
+    return response.data;
+  }
+
+  static async generateAIReplySuggestion(request: AIReplySuggestionRequest): Promise<AIGenerationResponse> {
+    const response: AxiosResponse<AIGenerationResponse> = await api.post('/emails/ai/reply-suggestion', request);
     return response.data;
   }
 
@@ -217,8 +230,9 @@ export class EmailApiService {
     filename: string,
     folder: string
   ): Promise<Blob> {
+    const encodedFilename = encodeURIComponent(filename);
     const response: AxiosResponse<Blob> = await api.post(
-      `/emails/${emailId}/attachments/${filename}`,
+      `/emails/${emailId}/attachments/${encodedFilename}`,
       {
         creds: credentials,
         folder,
@@ -283,9 +297,11 @@ export function handleApiError(error: any): string {
   if (error.response?.status === 400) {
     return error.response.data?.detail || 'Invalid request. Please check your input.';
   } else if (error.response?.status === 404) {
-    return 'Email not found.';
+    return error.response?.data?.detail || 'Resource not found.';
   } else if (error.response?.status === 502) {
     return 'Connection error. Please check your email server settings.';
+  } else if (error.response?.status === 503) {
+    return error.response.data?.detail || 'AI service is not configured.';
   } else if (error.response?.status >= 500) {
     return 'Server error. Please try again later.';
   } else if (error.code === 'NETWORK_ERROR' || !error.response) {

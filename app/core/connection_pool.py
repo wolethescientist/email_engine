@@ -14,6 +14,10 @@ from .security import decrypt_secret
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+# Timeout for cleanup operations (seconds).
+CLEANUP_TIMEOUT = 5
+
+
 @dataclass
 class ConnectionKey:
     """Unique identifier for email connections"""
@@ -35,81 +39,55 @@ class PooledConnection:
     in_use: bool = False
     connection_count: int = 0
 
+
 class ConnectionPool:
-    """Async connection pool for IMAP/SMTP connections"""
+    """Connection manager for IMAP/SMTP connections.
     
-    def __init__(self, max_connections: int = 50, max_idle_time: int = 300):
+    IMAP connections are NOT reused between requests due to aioimaplib
+    protocol state corruption bugs when commands are issued rapidly on
+    a reused connection. Each get_imap_connection() creates a fresh
+    connection, and release_connection() destroys it.
+    
+    SMTP connections ARE pooled since they don't have the same issue.
+    """
+    
+    def __init__(self, max_connections: int = 50, max_idle_time: int = 180):
         self.max_connections = max_connections
         self.max_idle_time = max_idle_time
         self.pools: Dict[ConnectionKey, PooledConnection] = {}
         self.lock = asyncio.Lock()
         self.settings = get_settings()
+        self._active_imap_count = 0
         
     async def get_imap_connection(self, user) -> aioimaplib.IMAP4_SSL:
-        """Get or create IMAP connection from pool"""
+        """Create a fresh IMAP connection for each request.
+        
+        We intentionally do NOT reuse IMAP connections because aioimaplib
+        has protocol state corruption bugs: the final tagged OK response
+        from a FETCH can arrive asynchronously after the connection is
+        reused for a new SELECT, causing 'unexpected tagged response' aborts.
+        
+        The ~200ms login overhead per request is negligible compared to
+        random 500 errors from protocol corruption.
+        """
         with tracer.start_as_current_span("get_imap_connection") as span:
             span.set_attribute("user.email", user.email)
             span.set_attribute("imap.host", user.imap_host)
+            span.set_attribute("connection.reused", False)
             
-            key = ConnectionKey(
-                email=user.email,
-                imap_host=user.imap_host,
-                imap_port=user.imap_port,
-                smtp_host=user.smtp_host,
-                smtp_port=user.smtp_port
-            )
+            imap_client = await self._create_imap_connection(user)
+            self._active_imap_count += 1
+            span.set_attribute("active.connections", self._active_imap_count)
             
-            async with self.lock:
-                # Check if we have an existing connection
-                if key in self.pools:
-                    conn = self.pools[key]
-                    if conn.imap_client and not conn.in_use:
-                        try:
-                            # Test connection health
-                            await conn.imap_client.noop()
-                            
-                            # CRITICAL FIX: Reset IMAP state to prevent state corruption
-                            # Close any previously selected mailbox to ensure clean state
-                            try:
-                                await conn.imap_client.close()
-                                logger.debug(f"Reset IMAP state for pooled connection - closed previous mailbox")
-                            except Exception as close_e:
-                                # CLOSE might fail if no mailbox was selected, which is fine
-                                logger.debug(f"CLOSE command result (expected if no mailbox selected): {close_e}")
-                            
-                            conn.in_use = True
-                            conn.last_used = asyncio.get_event_loop().time()
-                            span.set_attribute("connection.reused", True)
-                            logger.debug(f"Reusing IMAP connection for {user.email} with reset state")
-                            return conn.imap_client
-                        except Exception as e:
-                            logger.warning(f"Stale IMAP connection for {user.email}: {e}")
-                            await self._cleanup_connection(key)
-                
-                # Create new connection
-                span.set_attribute("connection.reused", False)
-                imap_client = await self._create_imap_connection(user)
-                
-                # Store in pool
-                if key not in self.pools:
-                    self.pools[key] = PooledConnection(
-                        imap_client=imap_client,
-                        smtp_client=None,
-                        last_used=asyncio.get_event_loop().time(),
-                        in_use=True
-                    )
-                else:
-                    self.pools[key].imap_client = imap_client
-                    self.pools[key].in_use = True
-                    self.pools[key].last_used = asyncio.get_event_loop().time()
-                
-                self.pools[key].connection_count += 1
-                span.set_attribute("connection.count", self.pools[key].connection_count)
-                logger.info(f"Created new IMAP connection for {user.email}")
-                return imap_client
+            logger.info(f"Created IMAP connection for {user.email} (active: {self._active_imap_count})")
+            return imap_client
     
     async def get_smtp_connection(self, user) -> aiosmtplib.SMTP:
-        """Get or create SMTP connection from pool"""
+        """Get or create SMTP connection from pool.
+        
+        SMTP connections are safe to reuse — they don't have the same
+        protocol state issues as aioimaplib.
+        """
         with tracer.start_as_current_span("get_smtp_connection") as span:
             span.set_attribute("user.email", user.email)
             span.set_attribute("smtp.host", user.smtp_host)
@@ -122,28 +100,35 @@ class ConnectionPool:
                 smtp_port=user.smtp_port
             )
             
+            # Try to reuse existing SMTP connection
+            candidate = None
             async with self.lock:
-                # Check if we have an existing connection
                 if key in self.pools:
                     conn = self.pools[key]
                     if conn.smtp_client and not conn.in_use:
-                        try:
-                            # Test connection health
-                            await conn.smtp_client.noop()
-                            conn.in_use = True
-                            conn.last_used = asyncio.get_event_loop().time()
-                            span.set_attribute("connection.reused", True)
-                            logger.debug(f"Reusing SMTP connection for {user.email}")
-                            return conn.smtp_client
-                        except Exception as e:
-                            logger.warning(f"Stale SMTP connection for {user.email}: {e}")
-                            await self._cleanup_connection(key)
-                
-                # Create new connection
-                span.set_attribute("connection.reused", False)
-                smtp_client = await self._create_smtp_connection(user)
-                
-                # Store in pool
+                        conn.in_use = True
+                        candidate = conn
+            
+            if candidate is not None:
+                try:
+                    await asyncio.wait_for(
+                        candidate.smtp_client.noop(),
+                        timeout=CLEANUP_TIMEOUT
+                    )
+                    candidate.last_used = asyncio.get_event_loop().time()
+                    span.set_attribute("connection.reused", True)
+                    logger.debug(f"Reusing healthy SMTP connection for {user.email}")
+                    return candidate.smtp_client
+                except Exception as e:
+                    logger.warning(f"Stale SMTP connection for {user.email}: {e}")
+                    async with self.lock:
+                        await self._cleanup_smtp(key)
+            
+            # Create new SMTP connection
+            span.set_attribute("connection.reused", False)
+            smtp_client = await self._create_smtp_connection(user)
+            
+            async with self.lock:
                 if key not in self.pools:
                     self.pools[key] = PooledConnection(
                         imap_client=None,
@@ -157,41 +142,49 @@ class ConnectionPool:
                     self.pools[key].last_used = asyncio.get_event_loop().time()
                 
                 self.pools[key].connection_count += 1
-                span.set_attribute("connection.count", self.pools[key].connection_count)
-                logger.info(f"Created new SMTP connection for {user.email}")
-                return smtp_client
+            
+            logger.info(f"Created new SMTP connection for {user.email}")
+            return smtp_client
+    
+    async def release_imap_connection(self, imap_client: aioimaplib.IMAP4_SSL, user):
+        """Destroy an IMAP connection after use (no reuse).
+        
+        We logout and close immediately. This prevents any protocol
+        state corruption on reuse.
+        """
+        with tracer.start_as_current_span("release_imap_connection"):
+            try:
+                await asyncio.wait_for(
+                    imap_client.logout(),
+                    timeout=CLEANUP_TIMEOUT
+                )
+            except Exception as e:
+                logger.debug(f"IMAP logout on release: {e}")
+            
+            self._active_imap_count = max(0, self._active_imap_count - 1)
+            logger.debug(f"Destroyed IMAP connection for {user.email} (active: {self._active_imap_count})")
     
     async def release_connection(self, user, connection_type: str = "imap"):
-        """Release connection back to pool with proper state cleanup"""
-        with tracer.start_as_current_span("release_connection") as span:
-            span.set_attribute("user.email", user.email)
-            span.set_attribute("connection.type", connection_type)
-            
-            key = ConnectionKey(
-                email=user.email,
-                imap_host=user.imap_host,
-                imap_port=user.imap_port,
-                smtp_host=user.smtp_host,
-                smtp_port=user.smtp_port
-            )
-            
+        """Release connection — for backward compatibility.
+        
+        IMAP connections are destroyed (not returned to pool).
+        SMTP connections are returned to the pool.
+        """
+        key = ConnectionKey(
+            email=user.email,
+            imap_host=user.imap_host,
+            imap_port=user.imap_port,
+            smtp_host=user.smtp_host,
+            smtp_port=user.smtp_port
+        )
+        
+        if connection_type == "smtp":
             async with self.lock:
                 if key in self.pools:
                     conn = self.pools[key]
-                    
-                    # CRITICAL FIX: Reset IMAP state before returning to pool
-                    if connection_type == "imap" and conn.imap_client:
-                        try:
-                            # Close any selected mailbox to reset state
-                            await conn.imap_client.close()
-                            logger.debug(f"Reset IMAP state when releasing connection for {user.email}")
-                        except Exception as e:
-                            # CLOSE might fail if no mailbox was selected, which is fine
-                            logger.debug(f"CLOSE on release result (expected if no mailbox): {e}")
-                    
                     conn.in_use = False
                     conn.last_used = asyncio.get_event_loop().time()
-                    logger.debug(f"Released {connection_type} connection for {user.email} with clean state")
+                    logger.debug(f"Released SMTP connection for {user.email}")
     
     async def _create_imap_connection(self, user) -> aioimaplib.IMAP4_SSL:
         """Create new IMAP connection"""
@@ -250,24 +243,24 @@ class ConnectionPool:
             
             return smtp_client
     
-    async def _cleanup_connection(self, key: ConnectionKey):
-        """Clean up a specific connection"""
+    async def _cleanup_smtp(self, key: ConnectionKey):
+        """Clean up SMTP connection only"""
         if key in self.pools:
             conn = self.pools[key]
             try:
-                if conn.imap_client:
-                    await conn.imap_client.logout()
-            except Exception:
-                pass
-            try:
                 if conn.smtp_client:
-                    await conn.smtp_client.quit()
+                    await asyncio.wait_for(
+                        conn.smtp_client.quit(),
+                        timeout=CLEANUP_TIMEOUT
+                    )
             except Exception:
                 pass
-            del self.pools[key]
+            conn.smtp_client = None
     
     async def cleanup_idle_connections(self):
-        """Clean up idle connections that exceed max_idle_time"""
+        """Clean up idle SMTP connections that exceed max_idle_time.
+        (IMAP connections are not pooled, so nothing to clean up there.)
+        """
         with tracer.start_as_current_span("cleanup_idle_connections"):
             current_time = asyncio.get_event_loop().time()
             keys_to_remove = []
@@ -279,8 +272,13 @@ class ConnectionPool:
                         keys_to_remove.append(key)
                 
                 for key in keys_to_remove:
-                    await self._cleanup_connection(key)
-                    logger.info(f"Cleaned up idle connection for {key.email}")
+                    await self._cleanup_smtp(key)
+                    del self.pools[key]
+                    logger.info(f"Cleaned up idle SMTP connection for {key.email}")
+    
+    # Alias for backward compatibility
+    async def keepalive_idle_connections(self):
+        await self.cleanup_idle_connections()
     
     async def close_all_connections(self):
         """Close all connections in the pool"""
@@ -288,7 +286,16 @@ class ConnectionPool:
             async with self.lock:
                 keys = list(self.pools.keys())
                 for key in keys:
-                    await self._cleanup_connection(key)
+                    conn = self.pools[key]
+                    try:
+                        if conn.smtp_client:
+                            await asyncio.wait_for(
+                                conn.smtp_client.quit(),
+                                timeout=CLEANUP_TIMEOUT
+                            )
+                    except Exception:
+                        pass
+                    del self.pools[key]
                 logger.info("Closed all connections in pool")
 
 # Global connection pool instance
@@ -301,23 +308,27 @@ def get_connection_pool() -> ConnectionPool:
         settings = get_settings()
         _connection_pool = ConnectionPool(
             max_connections=getattr(settings, 'MAX_CONNECTIONS', 50),
-            max_idle_time=getattr(settings, 'MAX_IDLE_TIME', 300)
+            max_idle_time=getattr(settings, 'MAX_IDLE_TIME', 180)
         )
     return _connection_pool
 
 @asynccontextmanager
 async def get_imap_client(user):
-    """Context manager for IMAP connections"""
+    """Context manager for IMAP connections.
+    
+    Creates a fresh connection each time and destroys it when done.
+    This prevents aioimaplib protocol state corruption entirely.
+    """
     pool = get_connection_pool()
     client = await pool.get_imap_connection(user)
     try:
         yield client
     finally:
-        await pool.release_connection(user, "imap")
+        await pool.release_imap_connection(client, user)
 
 @asynccontextmanager
 async def get_smtp_client(user):
-    """Context manager for SMTP connections"""
+    """Context manager for SMTP connections (pooled)"""
     pool = get_connection_pool()
     client = await pool.get_smtp_connection(user)
     try:

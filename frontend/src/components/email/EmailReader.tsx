@@ -14,10 +14,11 @@ import {
   Paperclip,
   Calendar,
   MoreHorizontal,
-  Mail
+  Mail,
+  Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { Credentials, FolderType } from '@/types';
+import { Credentials, ComposePrefill, FolderType } from '@/types';
 import { EmailApiService, handleApiError } from '@/services/emailApi';
 import { formatRelativeTime, generateAvatarUrl, isImageFile, cn } from '@/utils';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -27,8 +28,7 @@ interface EmailReaderProps {
   emailId: number;
   folder: FolderType;
   onClose: () => void;
-  onReply: () => void;
-  onCompose: () => void;
+  onComposeAction: (prefill: ComposePrefill) => void;
 }
 
 export default function EmailReader({
@@ -36,8 +36,7 @@ export default function EmailReader({
   emailId,
   folder,
   onClose,
-  onReply,
-  onCompose
+  onComposeAction
 }: EmailReaderProps) {
   const [showAllRecipients, setShowAllRecipients] = useState(false);
   const queryClient = useQueryClient();
@@ -63,11 +62,23 @@ export default function EmailReader({
   // Star mutation
   const starMutation = useMutation({
     mutationFn: (starred: boolean) => EmailApiService.starEmail(credentials, emailId, folder, starred),
+    onMutate: async (starred) => {
+      await queryClient.cancelQueries({ queryKey: ['email', emailId, folder] });
+      const previousEmail = queryClient.getQueryData(['email', emailId, folder]);
+      queryClient.setQueryData(['email', emailId, folder], (old: any) => {
+        if (!old) return old;
+        return { ...old, is_flagged: starred };
+      });
+      return { previousEmail };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['emails'] });
-      queryClient.invalidateQueries({ queryKey: ['email', emailId] });
+      queryClient.invalidateQueries({ queryKey: ['email', emailId, folder] });
     },
-    onError: (error) => {
+    onError: (error, variables, context: any) => {
+      if (context?.previousEmail) {
+        queryClient.setQueryData(['email', emailId, folder], context.previousEmail);
+      }
       toast.error(handleApiError(error));
     },
   });
@@ -93,6 +104,19 @@ export default function EmailReader({
       toast.success('Email moved to trash');
       onClose();
     },
+    onError: (error) => {
+      toast.error(handleApiError(error));
+    },
+  });
+
+  const aiReplyMutation = useMutation({
+    mutationFn: (style: 'short' | 'medium' | 'formal') =>
+      EmailApiService.generateAIReplySuggestion({
+        style,
+        subject: email?.subject,
+        from_address: email?.from_address,
+        body: email?.body,
+      }),
     onError: (error) => {
       toast.error(handleApiError(error));
     },
@@ -145,6 +169,62 @@ export default function EmailReader({
   const allRecipients = [...email.to_addresses, ...email.cc_addresses];
   const displayRecipients = showAllRecipients ? allRecipients : allRecipients.slice(0, 3);
   const hasMoreRecipients = allRecipients.length > 3;
+
+  const ensurePrefix = (value: string, prefix: string) =>
+    value.toLowerCase().startsWith(prefix.toLowerCase()) ? value : `${prefix}${value}`;
+
+  const buildQuotedBody = () => {
+    if (!email.body) return '';
+    return `\n\n--- Original Message ---\n${email.body}`;
+  };
+
+  const handleReply = () => {
+    if (!email.from_address) return;
+    onComposeAction({
+      mode: 'reply',
+      to: [email.from_address],
+      subject: ensurePrefix(email.subject || '', 'Re: '),
+      body: buildQuotedBody(),
+    });
+  };
+
+  const handleReplyAll = () => {
+    if (!email.from_address) return;
+    const currentUser = credentials.email.toLowerCase();
+    const recipients = Array.from(
+      new Set([email.from_address, ...email.to_addresses, ...email.cc_addresses])
+    ).filter((address) => address.toLowerCase() !== currentUser);
+
+    onComposeAction({
+      mode: 'replyAll',
+      to: recipients,
+      subject: ensurePrefix(email.subject || '', 'Re: '),
+      body: buildQuotedBody(),
+    });
+  };
+
+  const handleForward = () => {
+    onComposeAction({
+      mode: 'forward',
+      subject: ensurePrefix(email.subject || '', 'Fwd: '),
+      body: buildQuotedBody(),
+    });
+  };
+
+  const handleAiReply = async (style: 'short' | 'medium' | 'formal') => {
+    if (!email?.from_address) return;
+    try {
+      const result = await aiReplyMutation.mutateAsync(style);
+      onComposeAction({
+        mode: 'reply',
+        to: [email.from_address],
+        subject: ensurePrefix(email.subject || '', 'Re: '),
+        body: result.content,
+      });
+    } catch {
+      // Error toast handled by mutation onError
+    }
+  };
 
   return (
     <motion.div
@@ -206,7 +286,7 @@ export default function EmailReader({
         {/* Actions */}
         <div className="flex items-center gap-2">
           <button
-            onClick={onReply}
+            onClick={handleReply}
             className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
           >
             <Reply className="w-3 h-3" />
@@ -214,7 +294,7 @@ export default function EmailReader({
           </button>
           
           <button
-            onClick={onReply}
+            onClick={handleReplyAll}
             className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
           >
             <ReplyAll className="w-3 h-3" />
@@ -222,11 +302,38 @@ export default function EmailReader({
           </button>
           
           <button
-            onClick={onCompose}
+            onClick={handleForward}
             className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
           >
             <Forward className="w-3 h-3" />
             Forward
+          </button>
+
+          <button
+            onClick={() => handleAiReply('short')}
+            disabled={aiReplyMutation.isPending}
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
+          >
+            <Sparkles className="w-3 h-3" />
+            AI Short
+          </button>
+
+          <button
+            onClick={() => handleAiReply('medium')}
+            disabled={aiReplyMutation.isPending}
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
+          >
+            <Sparkles className="w-3 h-3" />
+            AI Medium
+          </button>
+
+          <button
+            onClick={() => handleAiReply('formal')}
+            disabled={aiReplyMutation.isPending}
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors flex items-center gap-2"
+          >
+            <Sparkles className="w-3 h-3" />
+            AI Formal
           </button>
         </div>
       </div>

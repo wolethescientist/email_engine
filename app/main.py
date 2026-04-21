@@ -24,29 +24,36 @@ async def lifespan(app: FastAPI):
     # Startup
     settings = get_settings()
     
-    # Start connection pool cleanup task
+    # Start connection keepalive + cleanup task
     pool = get_connection_pool()
-    cleanup_task = asyncio.create_task(connection_cleanup_worker(pool, settings.CONNECTION_CLEANUP_INTERVAL))
+    keepalive_task = asyncio.create_task(
+        connection_keepalive_worker(pool, settings.CONNECTION_CLEANUP_INTERVAL)
+    )
     
-    logging.info(f"Started {settings.APP_NAME} with connection pooling")
+    logging.info(f"Started {settings.APP_NAME} with connection pooling (keepalive every {settings.CONNECTION_CLEANUP_INTERVAL}s, evict after {getattr(settings, 'MAX_IDLE_TIME', 180)}s)")
     
     yield
     
     # Shutdown
-    cleanup_task.cancel()
+    keepalive_task.cancel()
     await pool.close_all_connections()
     logging.info("Shutdown complete")
 
-async def connection_cleanup_worker(pool, interval: int):
-    """Background task to clean up idle connections"""
+async def connection_keepalive_worker(pool, interval: int):
+    """Background task to send keepalive NOOPs and evict dead connections.
+    
+    Runs every `interval` seconds and:
+    1. Sends NOOP to connections idle > 2 min (keeps them alive)
+    2. Evicts connections idle > max_idle_time (frees resources)
+    """
     while True:
         try:
             await asyncio.sleep(interval)
-            await pool.cleanup_idle_connections()
+            await pool.keepalive_idle_connections()
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logging.error(f"Connection cleanup error: {e}")
+            logging.error(f"Connection keepalive error: {e}")
 
 settings = get_settings()
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)

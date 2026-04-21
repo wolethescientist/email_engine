@@ -143,13 +143,13 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+          className="glass-strong rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-border">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-                <Mail className="w-5 h-5 text-primary-foreground" />
+          <div className="flex items-center justify-between p-6 border-b border-border/50">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl brand-gradient flex items-center justify-center shadow-lg relative">
+                <Mail className="w-6 h-6 text-white relative z-10" />
               </div>
               <div>
                 <h2 className="text-xl font-semibold">Connect Your Email</h2>
@@ -175,7 +175,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                   {...register('email')}
                   type="email"
                   placeholder="your.email@example.com"
-                  className="w-full pl-10 pr-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  className="input-base pl-10"
                 />
               </div>
               {errors.email && (
@@ -192,7 +192,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                   setValue('provider', e.target.value);
                   handleProviderChange(e.target.value);
                 }}
-                className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="input-base"
               >
                 <option value="">Select a provider</option>
                 {Object.entries(EMAIL_PROVIDERS).map(([key, provider]) => (
@@ -215,7 +215,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                   {...register('password')}
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Enter your password"
-                  className="w-full pl-10 pr-12 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  className="input-base pl-10 pr-12"
                 />
                 <button
                   type="button"
@@ -248,7 +248,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                     <input
                       {...register('imap_host')}
                       placeholder="imap.example.com"
-                      className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      className="input-base"
                     />
                     {errors.imap_host && (
                       <p className="text-xs text-destructive mt-1">{errors.imap_host.message}</p>
@@ -261,7 +261,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                       {...register('imap_port', { valueAsNumber: true })}
                       type="number"
                       placeholder="993"
-                      className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      className="input-base"
                     />
                     {errors.imap_port && (
                       <p className="text-xs text-destructive mt-1">{errors.imap_port.message}</p>
@@ -273,7 +273,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                     <input
                       {...register('smtp_host')}
                       placeholder="smtp.example.com"
-                      className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      className="input-base"
                     />
                     {errors.smtp_host && (
                       <p className="text-xs text-destructive mt-1">{errors.smtp_host.message}</p>
@@ -286,7 +286,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
                       {...register('smtp_port', { valueAsNumber: true })}
                       type="number"
                       placeholder="465"
-                      className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      className="input-base"
                     />
                     {errors.smtp_port && (
                       <p className="text-xs text-destructive mt-1">{errors.smtp_port.message}</p>
@@ -322,7 +322,7 @@ export default function ConnectionForm({ onConnect, onClose }: ConnectionFormPro
             <button
               type="submit"
               disabled={!isValid || isConnecting}
-              className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              className="btn-primary w-full py-3 mt-4"
             >
               {isConnecting ? (
                 <>

@@ -6,6 +6,9 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from ...schemas.email import (
+    AIDraftRequest,
+    AIGenerationResponse,
+    AIReplySuggestionRequest,
     AttachmentDownloadRequest,
     DraftResponse,
     EmailComposeRequest,
@@ -18,6 +21,7 @@ from ...schemas.email import (
     SendEmailRequest,
     StarEmailRequest,
 )
+from ...core.config import get_settings
 from ...schemas.user import Credentials
 from ...services.email_service import (
     append_draft_imap,
@@ -30,6 +34,7 @@ from ...services.email_service import (
     set_read_flag_imap,
     set_flagged_status_imap,
 )
+from ...services.ai_writer import generate_draft_from_prompt, generate_reply_suggestion
 
 # Setup logger
 logging.basicConfig(level=logging.INFO)
@@ -386,9 +391,73 @@ async def download_attachment(email_id: int, filename: str, request: Request, bo
         content, content_type, safe_name = result
         headers = {"Content-Disposition": f"attachment; filename=\"{safe_name}\""}
         return Response(content=content, media_type=content_type or "application/octet-stream", headers=headers)
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.warning(f"Failed to download attachment {filename} for {user.email}: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error downloading attachment {filename} for {user.email}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while downloading attachment.")
+
+
+@router.post("/ai/draft", response_model=AIGenerationResponse)
+async def generate_ai_draft(request: Request, body: AIDraftRequest):
+    settings = get_settings()
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gemini API key is not configured")
+    try:
+        content = generate_draft_from_prompt(
+            prompt=body.prompt,
+            to=[str(item) for item in body.to],
+            cc=[str(item) for item in body.cc],
+            subject=body.subject,
+        )
+        if not content:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gemini returned empty draft content")
+        return AIGenerationResponse(content=content)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(f"AI draft generation failed: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        error_text = str(e)
+        if "503" in error_text or "UNAVAILABLE" in error_text:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Gemini is currently busy. Please try again in a moment."
+            )
+        logger.error(f"Unexpected error generating AI draft: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while generating draft.")
+
+
+@router.post("/ai/reply-suggestion", response_model=AIGenerationResponse)
+async def generate_ai_reply_suggestion(request: Request, body: AIReplySuggestionRequest):
+    settings = get_settings()
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gemini API key is not configured")
+    try:
+        content = generate_reply_suggestion(
+            style=body.style,
+            subject=body.subject,
+            from_address=body.from_address,
+            body=body.body,
+        )
+        if not content:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gemini returned empty reply content")
+        return AIGenerationResponse(content=content)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(f"AI reply generation failed: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        error_text = str(e)
+        if "503" in error_text or "UNAVAILABLE" in error_text:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Gemini is currently busy. Please try again in a moment."
+            )
+        logger.error(f"Unexpected error generating AI reply: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while generating reply.")
