@@ -5,7 +5,10 @@
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyc
+*.pyo
 *$py.class
 *.so
 .Python
@@ -73,6 +76,9 @@ frontend/dist/
 frontend/.next/
 frontend/out/
 frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.production
 
 # IDEs
 .vscode/
@@ -93,6 +99,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+email_engine.log
 
 # Runtime data
 pids
